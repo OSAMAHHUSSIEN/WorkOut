@@ -1,418 +1,2757 @@
+<!-- =========================
+      PART 1/10 — BASE SHELL
+     ========================= -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Workout Tracker — نسخة ملف واحد</title>
-  <!-- Tailwind CSS -->
+  <title>Workout & Meals Tracker</title>
+  <meta name="theme-color" content="#111827" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- React & ReactDOM UMD -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <!-- Babel to run JSX in one file (dev/demo) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body class="bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50">
   <div id="root"></div>
+
   <script type="text/babel">
-    const { useEffect, useMemo, useState } = React;
+    // =========================
+    // React hooks shortcuts
+    // =========================
+    const { useEffect, useMemo, useRef, useState } = React;
 
-    // =============================
-    // Utilities
-    // =============================
-    const clx = (...arr) => arr.filter(Boolean).join(" ");
-    const safeParse = (v, d) => { try { const x = JSON.parse(v); return x ?? d; } catch { return d; } };
-    const uid = () => Math.random().toString(36).slice(2, 10);
-    const roundTo = (num, step) => Math.round(num / step) * step;
+    // =========================
+    // Utils
+    // =========================
+    const clx = (...a)=> a.filter(Boolean).join(' ');
+    const safeParse = (v, d) => { try { const x = JSON.parse(v); return (x==null?d:x); } catch { return d; } };
+    const uid = () => Math.random().toString(36).slice(2,10);
     const nowIso = () => new Date().toISOString();
-    const estimate1RM = (weight, reps) => { const w = Number(weight)||0; const r = Number(reps)||0; if(!w||!r) return 0; return w*(1+r/30); };
-    const suggestSets = ({ lastWeight, lastReps, targetReps = 10, stepKg = 2.5, percents = [0.7,0.725,0.75,0.775] }) => {
-      const est = estimate1RM(lastWeight, lastReps); if(!est) return []; return percents.map(p=>({ weight: Math.max(stepKg, roundTo(est*p, stepKg)), reps: targetReps, rpe: 7.5 })); };
+    const dateKey = (iso)=> new Date(iso||Date.now()).toISOString().slice(0,10);
+    const todayKey = ()=> dateKey();
+    const round = (n, dp=1)=> Number((+n||0).toFixed(dp));
 
-    // =============================
-    // I18N strings
-    // =============================
+    // Unit conversion
+    const KG_TO_LB = 2.20462262185;
+    const kgToLb = (kg)=> (Number(kg)||0)*KG_TO_LB;
+    const lbToKg = (lb)=> (Number(lb)||0)/KG_TO_LB;
+
+    // Daily storage helpers (تلقائيًا نستخدم مفتاح اليوم)
+    const dayScopedKey = (base)=> `${base}__${todayKey()}`;
+    const loadDay = (base, def)=> safeParse(localStorage.getItem(dayScopedKey(base)), def);
+    const saveDay = (base, val)=> localStorage.setItem(dayScopedKey(base), JSON.stringify(val));
+    const clearOldDays = (prefixes=[])=>{
+      const tk = todayKey();
+      Object.keys(localStorage).forEach(k=>{
+        if(prefixes.some(p=>k.startsWith(p+"__")) && !k.endsWith("__"+tk)){
+          localStorage.removeItem(k);
+        }
+      });
+    };
+    // نحرص نمسح أكل اليوم/ملخص اليوم بنهاية اليوم تلقائياً (عند أول فتح لليوم الجديد)
+    clearOldDays(["meals_today","summary_today"]);
+
+    // =========================
+    // i18n strings
+    // =========================
     const STR = {
-      appTitle: { en: "Workout Tracker", ar: "متابعة التمرين" },
-      workout: { en: "Workout", ar: "التمرين" },
-      history: { en: "History", ar: "السجل" },
-      profile: { en: "Profile", ar: "الملف الشخصي" },
-      backup: { en: "Backup", ar: "نسخة احتياطية" },
-      search: { en: "Search exercises...", ar: "ابحث عن تمرين..." },
-      chooseMuscle: { en: "Muscle Groups", ar: "مجموعات العضلات" },
-      add: { en: "Add", ar: "إضافة" },
-      sets: { en: "Sets", ar: "المجموعات" },
-      weight: { en: "Weight (kg)", ar: "الوزن (كجم)" },
-      reps: { en: "Reps", ar: "عداد" },
-      rpe: { en: "RPE", ar: "جهد" },
-      plate: { en: "Plate #", ar: "رقم البليت" },
-      type: { en: "Type", ar: "النوع" },
-      free: { en: "Free Weights", ar: "حديد حر" },
-      machine: { en: "Machine", ar: "جهاز" },
-      cable: { en: "Cable", ar: "كيبل" },
-      addSet: { en: "+ Add Set", ar: "+ مجموعة" },
-      remove: { en: "Remove", ar: "حذف" },
-      suggest: { en: "Auto-suggest", ar: "اقتراح تلقائي" },
-      copyLast: { en: "Copy Last", ar: "نسخ آخر" },
-      finishSave: { en: "Finish & Save", ar: "انهاء وحفظ" },
-      noSessions: { en: "No sessions yet.", ar: "لا يوجد جلسات بعد." },
-      session: { en: "Session", ar: "جلسة" },
-      view: { en: "View", ar: "عرض" },
-      useTemplate: { en: "Use as Template", ar: "استخدام كقالب" },
-      delete: { en: "Delete", ar: "حذف" },
-      bodyWeight: { en: "Body Weight (kg)", ar: "الوزن (كجم)" },
-      height: { en: "Height (cm)", ar: "الطول (سم)" },
-      experience: { en: "Experience", ar: "المستوى" },
-      beginner: { en: "Beginner", ar: "مبتدئ" },
-      intermediate: { en: "Intermediate", ar: "متوسط" },
-      advanced: { en: "Advanced", ar: "متقدم" },
-      saveProfile: { en: "Save Profile", ar: "حفظ الملف" },
-      stackStep: { en: "Machine Stack Step (kg)", ar: "خطوة جهاز (كجم)" },
-      barbellStep: { en: "Free Weight Step (kg)", ar: "خطوة الحديد الحر (كجم)" },
-      targetReps: { en: "Target Reps", ar: "عداد مستهدف" },
-      lastSet: { en: "Calibration Set", ar: "مجموعة معايرة" },
-      lastWeight: { en: "Last Weight (kg)", ar: "آخر وزن (كجم)" },
-      lastReps: { en: "Last Reps", ar: "آخر عداد" },
-      apply: { en: "Apply", ar: "تطبيق" },
-      cancel: { en: "Cancel", ar: "إلغاء" },
-      exportJson: { en: "Export JSON", ar: "تصدير JSON" },
-      importJson: { en: "Import JSON", ar: "استيراد JSON" },
-      dataHere: { en: "Paste data here", ar: "الصق البيانات هنا" },
-      restTimer: { en: "Rest Timer", ar: "مؤقت الراحة" },
-      start: { en: "Start", ar: "بدء" },
-      stop: { en: "Stop", ar: "إيقاف" },
-      reset: { en: "Reset", ar: "إعادة" },
+      // Tabs
+      workout:{en:"Workout",ar:"التمرين"},
+      meals:{en:"Meals",ar:"الأكل"},
+      summary:{en:"Summary",ar:"الملخص"},
+      history:{en:"History",ar:"السجل"},
+      profile:{en:"Profile",ar:"الملف الشخصي"},
+
+      // Workout
+      chooseGroup:{en:"Choose muscle or system",ar:"اختر عضلة/نظام"},
+      chooseMuscle:{en:"Choose a muscle",ar:"اختر عضلة"},
+      chooseSystem:{en:"Choose a system",ar:"اختر نظام"},
+      system:{en:"System",ar:"النظام"},
+      muscle:{en:"Muscle",ar:"العضلة"},
+      typeFilter:{en:"Type",ar:"النوع"},
+      all:{en:"All",ar:"الكل"},
+      machines:{en:"Machines",ar:"أجهزة"},
+      cables:{en:"Cables",ar:"كيبل"},
+      frees:{en:"Free Weights",ar:"وزن حر"},
+      add:{en:"Add",ar:"إضافة"},
+      sets:{en:"Sets",ar:"المجموعات"},
+      weightKg:{en:"Weight (kg)",ar:"الوزن (كجم)"},
+      weightLb:{en:"Weight (lb)",ar:"الوزن (رطل)"},
+      reps:{en:"Reps",ar:"عداد"},
+      effort:{en:"Effort",ar:"الجهد"},
+      easy:{en:"Easy",ar:"سهل"},
+      medium:{en:"Medium",ar:"متوسط"},
+      hard:{en:"Hard",ar:"صعب"},
+      veryHard:{en:"Very Hard",ar:"صعب جدًا"},
+      plate:{en:"Plate #",ar:"رقم البليت"},
+      free:{en:"Free Weights",ar:"حديد حر"},
+      machine:{en:"Machine",ar:"جهاز"},
+      cable:{en:"Cable",ar:"كيبل"},
+      addSet:{en:"+ Add Set",ar:"+ مجموعة"},
+      copyLast:{en:"Copy Last",ar:"نسخ آخر"},
+      remove:{en:"Remove",ar:"حذف"},
+      restTimer:{en:"Rest Timer",ar:"مؤقت الراحة"},
+      start:{en:"Start",ar:"بدء"}, stop:{en:"Stop",ar:"إيقاف"}, reset:{en:"Reset",ar:"إعادة"},
+      finishSave:{en:"Finish & Save",ar:"إنهاء وحفظ"},
+      totalVolume:{en:"Total Volume",ar:"الحجم الكلّي"},
+      noSessions:{en:"No sessions yet.",ar:"لا يوجد جلسات بعد."},
+      session:{en:"Session",ar:"جلسة"}, view:{en:"View",ar:"عرض"}, delete:{en:"Delete",ar:"حذف"},
+
+      // Meals
+      quickAdd:{en:"Quick add",ar:"إضافة سريعة"},
+      typeMealLine:{en:"Type meal(s) e.g. 'chicken breast 150g, rice 150g'",ar:"اكتب الوجبة مثل: صدور دجاج 150 جم، رز 150 جم"},
+      analyzeAdd:{en:"Analyze & Add",ar:"تحليل وإضافة"},
+      unknownFood:{en:"Unknown food",ar:"عنصر غير معروف"},
+      itemsAdded:{en:"items added",ar:"عناصر أُضيفت"},
+      mealName:{en:"Item",ar:"العنصر"},
+      mealType:{en:"Meal",ar:"الوجبة"},
+      breakfast:{en:"Breakfast",ar:"فطور"},
+      lunch:{en:"Lunch",ar:"غداء"},
+      dinner:{en:"Dinner",ar:"عشاء"},
+      snack:{en:"Snack",ar:"سناك"},
+      calories:{en:"Calories",ar:"سعرات"},
+      protein:{en:"Protein (g)",ar:"بروتين (غم)"},
+      carbs:{en:"Carbs (g)",ar:"كاربوهيدرات (غم)"},
+      fat:{en:"Fat (g)",ar:"دهون (غم)"},
+      totals:{en:"Totals",ar:"الإجمالي"},
+      saveDay:{en:"Save Today",ar:"حفظ اليوم"},
+      today:{en:"Today",ar:"اليوم"},
+      daySaved:{en:"Saved",ar:"تم الحفظ"},
+      kcal:{en:"kcal",ar:"سعرة"},
+
+      // Profile / Goals
+      goals:{en:"Goals",ar:"الأهداف"},
+      age:{en:"Age",ar:"العمر"},
+      sex:{en:"Sex",ar:"الجنس"}, male:{en:"Male",ar:"ذكر"}, female:{en:"Female",ar:"أنثى"},
+      height:{en:"Height (cm)",ar:"الطول (سم)"},
+      weight:{en:"Weight (kg)",ar:"الوزن (كجم)"},
+      bodyfat:{en:"Body fat %",ar:"نسبة الدهون %"},
+      muscleMass:{en:"Muscle mass (kg)",ar:"الكتلة العضلية (كجم)"},
+      activity:{en:"Activity",ar:"النشاط"},
+      sedentary:{en:"Sedentary",ar:"خامل"},
+      light:{en:"Light",ar:"خفيف"},
+      moderate:{en:"Moderate",ar:"متوسط"},
+      active:{en:"Active",ar:"نشط"},
+      veryActive:{en:"Very Active",ar:"نشط جدًا"},
+      goal:{en:"Calorie goal",ar:"هدف السعرات"},
+      cut:{en:"Cut (-15%)",ar:"تنشيف (-15%)"},
+      maintain:{en:"Maintain",ar:"ثبات"},
+      bulk:{en:"Bulk (+15%)",ar:"زيادة (+15%)"},
+      saveProfile:{en:"Save Profile",ar:"حفظ الملف"},
+
+      // Summary extras
+      todaySummary:{en:"Today's Summary",ar:"ملخص اليوم"},
+      goalRemain:{en:"Remaining to goal",ar:"المتبقي على الهدف"},
+      proteinRemaining:{en:"Protein remaining",ar:"المتبقي بروتين"},
+      carbsRemaining:{en:"Carbs remaining",ar:"المتبقي كاربوهيدرات"},
+      fatRemaining:{en:"Fat remaining",ar:"المتبقي دهون"},
+      calsRemaining:{en:"Calories remaining",ar:"المتبقي سعرات"},
+      suggestions:{en:"Suggestions",ar:"اقتراحات"},
+      addThese:{en:"Add:",ar:"أضف:"},
+
+      // History / Compare
+      compare:{en:"Compare",ar:"المقارنة"},
+      weekCompare:{en:"Weekly Compare",ar:"مقارنة أسبوعية"},
+      systemPlayed:{en:"System",ar:"النظام"},
     };
 
-    // =============================
-    // Exercise Library
-    // =============================
+    // =========================
+    // Day Systems & Labels
+    // =========================
+    // أنظمة اليوم المطلوبة: push, pull, legs, upper, lower
+    const DAY_SYSTEMS = [
+      { id:'push',  ar:'بوش', en:'Push'  },
+      { id:'pull',  ar:'بول', en:'Pull'  },
+      { id:'legs',  ar:'ليق', en:'Legs'  },
+      { id:'upper', ar:'أبر', en:'Upper' },
+      { id:'lower', ar:'لوور', en:'Lower'},
+    ];
+    const DAY_AR = { push:'بوش', pull:'بول', legs:'ليق', upper:'أبر', lower:'لوور', core:'كور', other:'أخرى' };
+
+    // ربط العضلات بكل نظام
+    const SYSTEM_TO_MUSCLES = {
+      push:  ['chest','shoulders','triceps'],
+      pull:  ['back','biceps'],
+      legs:  ['legs','calves','core'],
+      upper: ['chest','shoulders','triceps','back','biceps','core'],
+      lower: ['legs','calves','core'],
+    };
+
+    // استنتاج نوع اليوم من العضلات الداخلة في الجلسة
+    function getDayTypeFromMuscles(muscleIds){
+      // نعدّ العضلات ضمن كل نظام ونختار الأعلى
+      const score = {push:0,pull:0,legs:0,upper:0,lower:0,core:0,other:0};
+      const sysEntries = Object.entries(SYSTEM_TO_MUSCLES);
+      for(const mid of (muscleIds||[])){
+        let matched = false;
+        for(const [sys, list] of sysEntries){
+          if(list.includes(mid)){ score[sys] += 1; matched = true; }
+        }
+        if(mid==='core'){ score.core += 0.5; matched = true; }
+        if(!matched) score.other += 0.25;
+      }
+      const best = Object.keys(score).sort((a,b)=>score[b]-score[a])[0] || 'other';
+      return best;
+    }
+
+    // =========================
+    // Library: Muscles & Exercises
+    // (سنكمل تفاصيل التمارين وتصغير الكروت لاحقًا في الأجزاء القادمة)
+    // =========================
+    // type: 'free' | 'machine' | 'cable'
     const LIB = [
       { id: 'back', en: 'Back', ar: 'الظهر', exercises: [
-        { id: 'lat_pulldown', en: 'Lat Pulldown', ar: 'سحب أمامي', type: 'cable' },
-        { id: 'seated_row', en: 'Seated Cable Row', ar: 'سحب جالس', type: 'cable' },
-        { id: 'barbell_row', en: 'Barbell Row', ar: 'تمرين الطلوع بالبار', type: 'free' },
-        { id: 'dumbbell_row', en: 'One-Arm DB Row', ar: 'تجديف دمبل', type: 'free' },
-        { id: 'tbar_row', en: 'T-Bar Row', ar: 'تجديف تي بار', type: 'machine' },
-        { id: 'deadlift', en: 'Deadlift', ar: 'الرفعة الميتة', type: 'free' },
-        { id: 'pullup', en: 'Pull-Up / Assisted', ar: 'عقلة / مساعد', type: 'machine' },
-        { id: 'facepull', en: 'Face Pull', ar: 'سحب للوجه', type: 'cable' },
-        { id: 'straight_pulldown', en: 'Straight-Arm Pulldown', ar: 'سحب مستقيم', type: 'cable' },
+        { id:'deadlift', en:'Deadlift', ar:'رفعة ميتة', type:'free' },
+        { id:'bb_row', en:'Barbell Row', ar:'تجديف بار', type:'free' },
+        { id:'db_row', en:'Dumbbell Row', ar:'تجديف دمبل', type:'free' },
+        { id:'lat_pulldown', en:'Lat Pulldown', ar:'سحب أمامي', type:'machine' },
+        { id:'hs_row', en:'Hammer Strength Row', ar:'رو هامر سترينث', type:'machine' },
+        { id:'tbar_row', en:'T-Bar Row (Machine)', ar:'تجديف تي بار', type:'machine' },
+        { id:'seated_row', en:'Seated Cable Row', ar:'سحب جالس', type:'cable' },
+        { id:'straight_arm_pulldown', en:'Straight Arm Pulldown', ar:'سحب مستقيم', type:'cable' },
       ]},
       { id: 'chest', en: 'Chest', ar: 'الصدر', exercises: [
-        { id: 'bench_press', en: 'Barbell Bench Press', ar: 'بنش بار', type: 'free' },
-        { id: 'incline_db', en: 'Incline DB Press', ar: 'ضغط مائل دمبل', type: 'free' },
-        { id: 'decline_press', en: 'Decline Press', ar: 'ضغط مائل للأسفل', type: 'machine' },
-        { id: 'chest_press', en: 'Machine Chest Press', ar: 'جهاز صدر', type: 'machine' },
-        { id: 'cable_fly', en: 'Cable Fly', ar: 'فلاي كيبل', type: 'cable' },
-        { id: 'pec_deck', en: 'Pec Deck Fly', ar: 'فلاي بيك ديك', type: 'machine' },
-        { id: 'pushup', en: 'Push-Up', ar: 'ضغط أرضي', type: 'free' },
-        { id: 'smith_bench', en: 'Smith Bench Press', ar: 'بنش سميث', type: 'machine' },
+        { id:'bench_press', en:'Bench Press', ar:'بنش بار', type:'free' },
+        { id:'incline_db', en:'Incline Dumbbell Press', ar:'ضغط مائل دمبل', type:'free' },
+        { id:'oh_pushup', en:'Push-ups', ar:'ضغط أرضي', type:'free' },
+        { id:'hs_chest', en:'Hammer Strength Chest', ar:'صدر هامر', type:'machine' },
+        { id:'incline_machine', en:'Incline Chest Press (Machine)', ar:'ضغط مائل جهاز', type:'machine' },
+        { id:'pec_deck', en:'Pec Deck Fly', ar:'فلاي بيك ديك', type:'machine' },
+        { id:'cable_fly', en:'Cable Fly', ar:'فلاي كيبل', type:'cable' },
+        { id:'low_to_high', en:'Low-to-High Cable Fly', ar:'فلاي تصاعدي كيبل', type:'cable' },
       ]},
       { id: 'legs', en: 'Legs', ar: 'الأرجل', exercises: [
-        { id: 'squat', en: 'Back Squat', ar: 'سكوات', type: 'free' },
-        { id: 'front_squat', en: 'Front Squat', ar: 'سكوات أمامي', type: 'free' },
-        { id: 'leg_press', en: 'Leg Press', ar: 'ضغط رجل', type: 'machine' },
-        { id: 'rdl', en: 'Romanian Deadlift', ar: 'رفعة رومانية', type: 'free' },
-        { id: 'leg_curl', en: 'Lying Leg Curl', ar: 'كورل هامسترنغ', type: 'machine' },
-        { id: 'leg_extension', en: 'Leg Extension', ar: 'اكستنشن ربلة', type: 'machine' },
-        { id: 'lunge', en: 'Walking Lunges', ar: 'لونجز مشي', type: 'free' },
-        { id: 'hack_squat', en: 'Hack Squat', ar: 'هاك سكوات', type: 'machine' },
+        { id:'squat', en:'Back Squat', ar:'سكوات', type:'free' },
+        { id:'front_squat', en:'Front Squat', ar:'سكوات أمامي', type:'free' },
+        { id:'romanian_dl', en:'Romanian Deadlift', ar:'رفعة رومانية', type:'free' },
+        { id:'leg_press', en:'Leg Press', ar:'ضغط رجل', type:'machine' },
+        { id:'leg_curl', en:'Leg Curl', ar:'كورل رجل', type:'machine' },
+        { id:'leg_extension', en:'Leg Extension', ar:'اكستنشن رجل', type:'machine' },
+        { id:'cable_kickback', en:'Cable Kickback', ar:'ركلة كيبل', type:'cable' },
+        { id:'cable_abduction', en:'Cable Hip Abduction', ar:'تبعيد فخذ كيبل', type:'cable' },
       ]},
-      { id: 'shoulders', en: 'Shoulders', ar: 'الكتف', exercises: [
-        { id: 'ohp', en: 'Overhead Press', ar: 'ضغط كتف', type: 'free' },
-        { id: 'db_shoulder_press', en: 'DB Shoulder Press', ar: 'ضغط كتف دمبل', type: 'free' },
-        { id: 'lateral_raise', en: 'Lateral Raise', ar: 'رفرفة جانبية', type: 'free' },
-        { id: 'rear_delt_fly', en: 'Rear Delt Fly', ar: 'فلاي خلفي', type: 'free' },
-        { id: 'smith_ohp', en: 'Smith Shoulder Press', ar: 'ضغط كتف سميث', type: 'machine' },
-        { id: 'cable_lateral', en: 'Cable Lateral Raise', ar: 'رفرفة كيبل', type: 'cابلe' },
+      { id: 'shoulders', en: 'Shoulders', ar: 'الأكتاف', exercises: [
+        { id:'ohp', en:'Overhead Press', ar:'ضغط كتف', type:'free' },
+        { id:'arnold', en:'Arnold Press', ar:'ضغط أرنولد', type:'free' },
+        { id:'lateral_raise', en:'Lateral Raise', ar:'رفرفة جانبية', type:'free' },
+        { id:'machine_press', en:'Machine Shoulder Press', ar:'ضغط كتف جهاز', type:'machine' },
+        { id:'reverse_pec', en:'Reverse Pec Deck', ar:'فلاي عكسي جهاز', type:'machine' },
+        { id:'cable_lateral', en:'Cable Lateral Raise', ar:'رفرفة كيبل', type:'cable' },
+        { id:'face_pull', en:'Face Pull', ar:'سحب وجه', type:'cable' },
       ]},
-      { id: 'biceps', en: 'Biceps', ar: 'باي', exercises: [
-        { id: 'barbell_curl', en: 'Barbell Curl', ar: 'كرل بار', type: 'free' },
-        { id: 'db_curl', en: 'DB Alternating Curl', ar: 'كرل دمبل', type: 'free' },
-        { id: 'preacher_curl', en: 'Preacher Curl', ar: 'كرسي باي', type: 'machine' },
-        { id: 'cable_curl', en: 'Cable Curl', ar: 'كرل كيبل', type: 'cable' },
-        { id: 'hammer_curl', en: 'Hammer Curl', ar: 'كرل مطرقة', type: 'free' },
+      { id: 'biceps', en:'Biceps', ar:'بايسبس', exercises:[
+        { id:'bb_curl', en:'Barbell Curl', ar:'كورل بار', type:'free' },
+        { id:'db_curl', en:'Dumbbell Curl', ar:'كورل دمبل', type:'free' },
+        { id:'preacher', en:'Preacher Curl (Machine)', ar:'كورل بريتشر', type:'machine' },
+        { id:'cable_curl', en:'Cable Curl', ar:'كورل كيبل', type:'cable' },
       ]},
-      { id: 'triceps', en: 'Triceps', ar: 'تراي', exercises: [
-        { id: 'pushdown', en: 'Triceps Pushdown', ar: 'دفع تراي', type: 'cable' },
-        { id: 'skullcrusher', en: 'Skull Crusher', ar: 'سكل كراشر', type: 'free' },
-        { id: 'overhead_ext', en: 'Overhead Extension', ar: 'تمديد فوق الرأس', type: 'cable' },
-        { id: 'dip', en: 'Dips / Assisted', ar: 'ديبس / مساعد', type: 'machine' },
-        { id: 'rope_pushdown', en: 'Rope Pushdown', ar: 'حبل تراي', type: 'cable' },
+      { id: 'triceps', en:'Triceps', ar:'ترايسبس', exercises:[
+        { id:'skull', en:'Skull Crushers', ar:'سكول كراشر', type:'free' },
+        { id:'close_grip', en:'Close-Grip Bench', ar:'بنش ضيق', type:'free' },
+        { id:'dip_machine', en:'Dip Machine', ar:'ديب جهاز', type:'machine' },
+        { id:'pushdown', en:'Cable Pushdown', ar:'دفع كيبل', type:'cable' },
+        { id:'overhead_rope', en:'Overhead Rope Extension', ar:'تمديد أعلى كيبل', type:'cable' },
       ]},
-      { id: 'forearms', en: 'Forearms', ar: 'سواعد', exercises: [
-        { id: 'wrist_curl', en: 'Wrist Curl', ar: 'كرل معصم', type: 'free' },
-        { id: 'rev_wrist_curl', en: 'Reverse Wrist Curl', ar: 'كرل معصم عكسي', type: 'free' },
-        { id: 'farmer_walk', en: "Farmer's Walk", ar: 'مشية المزارع', type: 'free' },
+      { id:'core', en:'Core', ar:'كور', exercises:[
+        { id:'crunch', en:'Crunch', ar:'كرنش', type:'free' },
+        { id:'plank', en:'Plank', ar:'بلانك', type:'free' },
+        { id:'ab_machine', en:'Ab Machine Crunch', ar:'آلة بطن', type:'machine' },
+        { id:'cable_crunch', en:'Cable Crunch', ar:'كرنش كيبل', type:'cable' },
       ]},
-      { id: 'abs', en: 'Abs', ar: 'بطن', exercises: [
-        { id: 'crunch', en: 'Crunch', ar: 'كرنش', type: 'free' },
-        { id: 'hanging_raise', en: 'Hanging Leg Raise', ar: 'رفع أرجل معلق', type: 'free' },
-        { id: 'cable_crunch', en: 'Cable Crunch', ar: 'كرنش كيبل', type: 'cable' },
-        { id: 'plank', en: 'Plank', ar: 'بلانك', type: 'free' },
-      ]},
-      { id: 'calves', en: 'Calves', ar: 'ساق (سمانة)', exercises: [
-        { id: 'standing_calf', en: 'Standing Calf Raise', ar: 'رفع سمانة واقف', type: 'machine' },
-        { id: 'seated_calf', en: 'Seated Calf Raise', ar: 'رفع سمانة جالس', type: 'machine' },
-        { id: 'donkey_calf', en: 'Donkey Calf Raise', ar: 'رفع سمانة حمار', type: 'machine' },
+      { id:'calves', en:'Calves', ar:'سواعد/ساق', exercises:[
+        { id:'standing_calf', en:'Standing Calf Raise', ar:'رفع سمانة واقف', type:'free' },
+        { id:'seated_calf', en:'Seated Calf (Machine)', ar:'سمانة جالس جهاز', type:'machine' },
+        { id:'cable_calf', en:'Cable Calf Raise', ar:'رفع سمانة كيبل', type:'cable' },
       ]},
     ];
 
-    // =============================
-    // LocalStorage keys
-    // =============================
-    const LS = { profile: 'wt_profile_v1', history: 'wt_history_v1', workout: 'wt_current_v1', settings: 'wt_settings_v1' };
+    // ملاحظة: ربط النظام بالتمارين سيتم عبر ترشيح العضلات التابعة للنظام المختار.
+    // سنضيف واجهات الاختيار، التصغير، والعمليات الجديدة في الأجزاء 2/10 وما بعدها.
 
-    // =============================
-    // Small widgets
-    // =============================
-    function Pill({ active, onClick, children }){
-      return <button onClick={onClick} className={clx('px-3 py-1 rounded-full text-sm border', active? 'bg-indigo-600 text-white border-indigo-600':'bg-white/70 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700')}>{children}</button>
-    }
-    function Field({ label, children }){
-      return (<label className="flex flex-col gap-1 text-sm"><span className="text-zinc-600 dark:text-zinc-300">{label}</span>{children}</label>);
-    }
-    function IconButton({ title, onClick, children }){
-      return <button type="button" title={title} onClick={onClick} className="px-3 py-1 rounded-md text-sm border bg-white/70 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800">{children}</button>
-    }
+    // نؤجل تركيب ReactDOM.render إلى الجزء الأخير حتى ما يصير خطأ أثناء البناء التدريجي.
+    // =========================
+    // END PART 1/10
+    // =========================
+  </script>
+</body>
+</html>
+<!-- =========================
+      PART 2/10 — WORKOUT UI
+     ========================= -->
+<script type="text/babel">
+  // مساعدات اختيار التمارين بحسب النظام/العضلة
+  const LIB_BY_ID = (() => {
+    const m = new Map();
+    LIB.forEach(x => m.set(x.id, x));
+    return m;
+  })();
 
-    // =============================
-    // Rest timer hook
-    // =============================
-    function useTimer(){
-      const [sec, setSec] = useState(0); const [running, setRunning] = useState(false);
-      useEffect(()=>{ if(!running) return; const id=setInterval(()=>setSec(s=>s+1),1000); return ()=>clearInterval(id); },[running]);
-      const start=()=>setRunning(true), stop=()=>setRunning(false), reset=()=>setSec(0);
-      const mm=String(Math.floor(sec/60)).padStart(2,'0'), ss=String(sec%60).padStart(2,'0');
-      return { sec, running, start, stop, reset, label: `${mm}:${ss}` };
-    }
+  function musclesForSystem(sysId){
+    return SYSTEM_TO_MUSCLES[sysId] || [];
+  }
+  function exercisesForMuscle(muscleId){
+    const m = LIB_BY_ID.get(muscleId);
+    return m?.exercises || [];
+  }
+  function exercisesForSystem(sysId){
+    const ms = musclesForSystem(sysId);
+    return ms.flatMap(mid => exercisesForMuscle(mid).map(e => ({...e, _muscleId: mid})));
+  }
 
-    // =============================
-    // Exercise Card
-    // =============================
-    function ExerciseCard({ it, idx, lang, str, settings, onChange, onRemove }){
-      const timer = useTimer();
-      const [showSuggest, setShowSuggest] = useState(false);
-      const [cal, setCal] = useState({ lastWeight: '', lastReps: '10', targetReps: '10' });
-      const step = it.type === 'free' ? settings.barStep : settings.stackStep;
-      const setField = (si, key, val) => { const sets = it.sets.map((s,i)=> i===si? { ...s, [key]: val }: s); onChange({ sets }); };
-      const addSet = () => onChange({ sets: [...it.sets, { weight:'', reps:'', rpe:'', plate:'' }] });
-      const removeSet = (i) => onChange({ sets: it.sets.filter((_,x)=>x!==i) });
-      const copyLast = () => { const s=it.sets.find(s=>s.weight && s.reps); if(!s) return; onChange({ sets: it.sets.map(()=>({ ...s })) }); };
-      const applySuggest = () => { const arr = suggestSets({ lastWeight:Number(cal.lastWeight), lastReps:Number(cal.lastReps), targetReps:Number(cal.targetReps), stepKg: step }); if(arr.length){ const newSets = it.sets.map((_,i)=> arr[i] ?? { weight:'', reps:'', rpe:'' }); onChange({ sets: newSets }); setShowSuggest(false); } };
-      const weightToPlate = (w) => { const kg=Number(w)||0; if(!kg||step<=0) return ''; return Math.round(kg/step); };
-      useEffect(()=>{ const sets = it.sets.map(s=> ({ ...s, plate: it.type==='machine'? weightToPlate(s.weight): s.plate })); onChange({ sets }); }, [settings.stackStep, it.type]);
+  // مكوّن: صف التمرين المضاف + مجموعاته (كج/رطل متزامن)
+  function ExerciseRow({ row, unit, onRemove, onUpdateSet, onAddSet, onCopyLast }){
+    const compactCell = "p-1";
+    const inputBase = "border rounded px-2 py-1 text-sm";
 
-      return (
-        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="font-semibold">{it.name.en} <span className="opacity-70">/ {it.name.ar}</span><span className="ml-2 text-xs opacity-70">({str(it.type)})</span></div>
-            <div className="flex gap-2">
-              <IconButton onClick={copyLast}>{str('copyLast')}</IconButton>
-              <IconButton onClick={()=>setShowSuggest(true)}>{str('suggest')}</IconButton>
-              <IconButton onClick={onRemove}>{str('remove')}</IconButton>
-            </div>
+    const headerNote = (
+      <span className="text-xs text-zinc-500 ms-1">
+        ({LIB_BY_ID.get(row.muscleId)?.ar || row.muscleId})
+      </span>
+    );
+
+    return (
+      <div className="border rounded-lg p-2">
+        <div className="flex items-center justify-between">
+          <div className="font-semibold text-sm">
+            {row.ex.ar} <span className="text-xs text-zinc-500">({row.ex.en})</span> {headerNote}
           </div>
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left border-b border-zinc-200 dark:border-zinc-800">
-                  <th className="py-1 pr-3">#</th>
-                  <th className="py-1 pr-3">{str('weight')}</th>
-                  <th className="py-1 pr-3">{str('reps')}</th>
-                  <th className="py-1 pr-3">{str('rpe')}</th>
-                  {it.type !== 'free' && <th className="py-1 pr-3">{str('plate')}</th>}
-                  <th></th>
+          <button onClick={onRemove} className="text-red-600 text-xs hover:underline">{STR.remove.ar}</button>
+        </div>
+
+        <div className="overflow-x-auto mt-2">
+          <table className="w-full text-xs">
+            <thead className="bg-zinc-100/60 dark:bg-zinc-800/60">
+              <tr>
+                <th className={compactCell}>{STR.weightKg.ar}</th>
+                <th className={compactCell}>{STR.weightLb.ar}</th>
+                <th className={compactCell}>{STR.reps.ar}</th>
+                <th className={compactCell}>{STR.effort.ar}</th>
+                <th className={compactCell}>{STR.plate.ar}</th>
+                <th className={compactCell}>{STR.remove.ar}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {row.sets.map(st=>(
+                <tr key={st.id} className="border-t">
+                  <td className={compactCell}>
+                    <input type="number" className={clx(inputBase,"w-24")}
+                      value={st.wkg ?? 0}
+                      onChange={e=>{
+                        const v = +e.target.value || 0;
+                        const lb = round(kgToLb(v),1);
+                        onUpdateSet(st.id, { wkg:v, wlb:lb });
+                      }}/>
+                  </td>
+                  <td className={compactCell}>
+                    <input type="number" className={clx(inputBase,"w-24")}
+                      value={st.wlb ?? 0}
+                      onChange={e=>{
+                        const v = +e.target.value || 0;
+                        const kg = round(lbToKg(v),1);
+                        onUpdateSet(st.id, { wlb:v, wkg:kg });
+                      }}/>
+                  </td>
+                  <td className={compactCell}>
+                    <input type="number" className={clx(inputBase,"w-16")}
+                      value={st.reps ?? 10}
+                      onChange={e=> onUpdateSet(st.id, { reps: +e.target.value || 0 })}/>
+                  </td>
+                  <td className={compactCell}>
+                    <select className={clx(inputBase,"w-28")}
+                      value={st.effort || 'medium'}
+                      onChange={e=> onUpdateSet(st.id, { effort: e.target.value })}>
+                      <option value="easy">{STR.easy.ar}</option>
+                      <option value="medium">{STR.medium.ar}</option>
+                      <option value="hard">{STR.hard.ar}</option>
+                      <option value="veryHard">{STR.veryHard.ar}</option>
+                    </select>
+                  </td>
+                  <td className={compactCell}>
+                    <input className={clx(inputBase,"w-20")} placeholder="#" value={st.plate || ''}
+                      onChange={e=> onUpdateSet(st.id, { plate: e.target.value })}/>
+                  </td>
+                  <td className={compactCell}>
+                    <button className="text-red-600 hover:underline"
+                      onClick={()=> onUpdateSet(st.id, { __delete: true })}>
+                      {STR.remove.ar}
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {it.sets.map((s,i)=> (
-                  <tr key={i} className="border-b border-zinc-100 dark:border-zinc-800">
-                    <td className="py-1 pr-3">{i+1}</td>
-                    <td className="py-1 pr-3"><input type="number" step={step} value={s.weight} onChange={e=>setField(i,'weight',e.target.value)} className="w-28 px-2 py-1 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" /></td>
-                    <td className="py-1 pr-3"><input type="number" step="1" value={s.reps} onChange={e=>setField(i,'reps',e.target.value)} className="w-20 px-2 py-1 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" /></td>
-                    <td className="py-1 pr-3"><input type="number" step="0.5" value={s.rpe} onChange={e=>setField(i,'rpe',e.target.value)} className="w-20 px-2 py-1 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" /></td>
-                    {it.type !== 'free' && (
-                      <td className="py-1 pr-3"><input type="number" step="1" value={s.plate} onChange={e=>setField(i,'plate',e.target.value)} className="w-20 px-2 py-1 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" /></td>
-                    )}
-                    <td className="py-1 pr-3 text-right"><IconButton onClick={()=>removeSet(i)}>-</IconButton></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="mt-2 flex items-center gap-2">
-              <button onClick={addSet} className="px-3 py-1 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700">{str('addSet')}</button>
-              <div className="ml-auto flex items-center gap-2 text-sm"><span className="opacity-70">{str('restTimer')}: {timer.label}</span>{!timer.running ? (<IconButton onClick={timer.start}>{str('start')}</IconButton>) : (<IconButton onClick={timer.stop}>{str('stop')}</IconButton>)}<IconButton onClick={timer.reset}>{str('reset')}</IconButton></div>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex gap-2 mt-2">
+          <button className="px-2 py-1 rounded bg-zinc-200 text-xs" onClick={onAddSet}>{STR.addSet.ar}</button>
+          <button className="px-2 py-1 rounded bg-zinc-200 text-xs" onClick={onCopyLast}>{STR.copyLast.ar}</button>
+        </div>
+      </div>
+    );
+  }
+
+  // صفحة التمرين: نظام/عضلة + كروت مصغّرة + مسودة جلسة بحقول مضغوطة
+  function Workout(){
+    const [mode,setMode]    = useState('system'); // system | muscle
+    const [system,setSystem]= useState('push');
+    const [muscle,setMuscle]= useState(LIB[0].id);
+    const [tFilter,setTFilter]=useState('all'); // all|free|machine|cable
+    const [q,setQ]=useState('');
+
+    const [unit,setUnit]=useState('kg'); // العرض العام فقط (الحسابات مربوطة بالحقول)
+    const [session,setSession]=useState(()=> loadDay("workout_draft", []));
+
+    useEffect(()=> saveDay("workout_draft", session), [session]);
+
+    // قائمة التمارين حسب الاختيار
+    const baseList = useMemo(()=>{
+      const list = mode==='system' ? exercisesForSystem(system)
+                                   : exercisesForMuscle(muscle).map(e=>({...e,_muscleId:muscle}));
+      return list;
+    },[mode,system,muscle]);
+    const exercises = useMemo(()=>{
+      let list = baseList;
+      if(tFilter!=='all') list = list.filter(x=>x.type===tFilter);
+      if(q.trim()){
+        const s=q.toLowerCase();
+        list = list.filter(x=> (x.en.toLowerCase().includes(s) || x.ar.includes(q)));
+      }
+      return list;
+    },[baseList,q,tFilter]);
+
+    // إضافة تمرين للمسودة
+    const addExercise = (ex)=>{
+      setSession(s=> [...s, { id:uid(), ex, muscleId: ex._muscleId || muscle, sets:[] }]);
+    };
+
+    // عمليات المجموعات
+    const addSet = (rowId)=>{
+      setSession(s=> s.map(r=>{
+        if(r.id!==rowId) return r;
+        const last = r.sets[r.sets.length-1] || { wkg:0, wlb:0, reps:10, effort:'medium', plate:'' };
+        return {...r, sets:[...r.sets, {...last, id:uid()}]};
+      }));
+    };
+    const copyLast = (rowId)=>{
+      setSession(s=> s.map(r=>{
+        if(r.id!==rowId || r.sets.length<1) return r;
+        const last = r.sets[r.sets.length-1];
+        return {...r, sets:[...r.sets, {...last, id:uid()}]};
+      }));
+    };
+    const removeExercise = (rowId)=> setSession(s=> s.filter(r=>r.id!==rowId));
+    const updateSet = (rowId,setId,patch)=>{
+      setSession(s=> s.map(r=>{
+        if(r.id!==rowId) return r;
+        const sets = r.sets.map(st=>{
+          if(st.id!==setId) return st;
+          if(patch.__delete) return null;
+          return {...st, ...patch};
+        }).filter(Boolean);
+        return {...r, sets};
+      }));
+    };
+
+    // حساب الحجم الكلي (بالكجم) = مجموع (وزن كجم * عدات)
+    const totalVolumeKg = session.reduce((sum,row)=>
+      sum + row.sets.reduce((t,st)=> t + ((+st.wkg||0) * (+st.reps||0)),0)
+    ,0);
+
+    return (
+      <section className="space-y-3">
+        {/* شريط خيارات أعلى مصغّر */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
+            <label className="text-xs">{STR.system.ar}</label>
+            <input type="radio" name="pick" checked={mode==='system'} onChange={()=>setMode('system')} />
+            <span className="text-xs">({STR.chooseSystem.ar})</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs">{STR.muscle.ar}</label>
+            <input type="radio" name="pick" checked={mode==='muscle'} onChange={()=>setMode('muscle')} />
+            <span className="text-xs">({STR.chooseMuscle.ar})</span>
+          </div>
+
+          {mode==='system' ? (
+            <select value={system} onChange={e=>setSystem(e.target.value)} className="border rounded px-2 py-1 text-sm">
+              {DAY_SYSTEMS.map(d=><option key={d.id} value={d.id}>{d.ar}</option>)}
+            </select>
+          ) : (
+            <select value={muscle} onChange={e=>setMuscle(e.target.value)} className="border rounded px-2 py-1 text-sm">
+              {LIB.map(m=><option key={m.id} value={m.id}>{m.ar}</option>)}
+            </select>
+          )}
+
+          <label className="text-xs">{STR.typeFilter.ar}</label>
+          <select value={tFilter} onChange={e=>setTFilter(e.target.value)} className="border rounded px-2 py-1 text-sm">
+            <option value="all">{STR.all.ar}</option>
+            <option value="free">{STR.frees.ar}</option>
+            <option value="machine">{STR.machines.ar}</option>
+            <option value="cable">{STR.cables.ar}</option>
+          </select>
+
+          <input value={q} onChange={e=>setQ(e.target.value)} className="border rounded px-2 py-1 text-sm flex-1 min-w-[140px]" placeholder="ابحث..." />
+
+          <div className="ms-auto flex items-center gap-2">
+            <span className="text-xs">الوحدة:</span>
+            <select value={unit} onChange={e=>setUnit(e.target.value)} className="border rounded px-2 py-1 text-sm">
+              <option value="kg">kg</option>
+              <option value="lb">lb</option>
+            </select>
+          </div>
+        </div>
+
+        {/* كروت تمارين مصغّرة */}
+        <div className="grid gap-2"
+             style={{gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))"}}>
+          {exercises.map(ex=>(
+            <button key={ex.id}
+              onClick={()=>addExercise(ex)}
+              className="rounded-lg border bg-white/80 dark:bg-zinc-900 p-2 text-right hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 transition">
+              <div className="font-semibold text-sm truncate">{ex.ar}</div>
+              <div className="text-[11px] text-zinc-500 truncate">
+                {ex.en} · {ex.type==='free'?STR.free.ar:ex.type==='machine'?STR.machine.ar:STR.cable.ar}
+              </div>
+              {ex._muscleId && (
+                <div className="text-[11px] text-zinc-600 mt-1">{LIB_BY_ID.get(ex._muscleId)?.ar}</div>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* المسودة + المجموعات (مضغوطة) */}
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold text-sm">{STR.sets.ar}</div>
+            <div className="text-xs">{STR.totalVolume.ar}: <span className="font-semibold">{round(totalVolumeKg,1)} kg·rep</span></div>
+          </div>
+
+          {!session.length && (
+            <div className="text-xs text-zinc-500 mt-2">أضف تمارين من الأعلى ثم أضف مجموعات.</div>
+          )}
+
+          <div className="space-y-2 mt-2">
+            {session.map(row=>(
+              <ExerciseRow
+                key={row.id}
+                row={row}
+                unit={unit}
+                onRemove={()=> removeExercise(row.id)}
+                onAddSet={()=> addSet(row.id)}
+                onCopyLast={()=> copyLast(row.id)}
+                onUpdateSet={(setId,patch)=> updateSet(row.id,setId,patch)}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+  // ملاحظة: سنقوم بتركيب التبويبات و ReactDOM.render في الأجزاء اللاحقة.
+  // =========================
+  // END PART 2/10
+  // =========================
+</script>
+<!-- =========================
+      PART 3/10 — REST & SAVE
+     ========================= -->
+<script type="text/babel">
+  // مؤقت راحة مصغّر
+  function RestTimerMini(){
+    const [sec,setSec] = React.useState(60);
+    const [running,setRunning]=React.useState(false);
+    const ref = React.useRef(null);
+
+    React.useEffect(()=>{
+      if(!running) return;
+      ref.current = setInterval(()=> setSec(s=> s>0? s-1:0), 1000);
+      return ()=> clearInterval(ref.current);
+    },[running]);
+
+    return (
+      <div className="flex items-center gap-2 text-xs">
+        <input type="number" className="w-16 border rounded px-2 py-1"
+          value={sec} onChange={e=>setSec(Math.max(0,+e.target.value||0))}/>
+        <button className="px-2 py-1 rounded bg-indigo-600 text-white" onClick={()=>setRunning(true)}>{STR.start.ar}</button>
+        <button className="px-2 py-1 rounded bg-zinc-200" onClick={()=>setRunning(false)}>{STR.stop.ar}</button>
+        <button className="px-2 py-1 rounded bg-zinc-200" onClick={()=>{setRunning(false);setSec(60);}}>{STR.reset.ar}</button>
+        <div className="font-mono">{Math.floor(sec/60)}:{String(sec%60).padStart(2,'0')}</div>
+      </div>
+    );
+  }
+
+  // نعيد تعريف صفحة Workout بإضافات المؤقت + الحفظ
+  function Workout(){
+    const [mode,setMode]    = useState('system'); // system | muscle
+    const [system,setSystem]= useState('push');
+    const [muscle,setMuscle]= useState(LIB[0].id);
+    const [tFilter,setTFilter]=useState('all'); // all|free|machine|cable
+    const [q,setQ]=useState('');
+
+    const [unit,setUnit]=useState('kg');
+    const [session,setSession]=useState(()=> loadDay("workout_draft", []));
+    useEffect(()=> saveDay("workout_draft", session), [session]);
+
+    const baseList = useMemo(()=>{
+      const list = mode==='system' ? exercisesForSystem(system)
+                                   : exercisesForMuscle(muscle).map(e=>({...e,_muscleId:muscle}));
+      return list;
+    },[mode,system,muscle]);
+
+    const exercises = useMemo(()=>{
+      let list = baseList;
+      if(tFilter!=='all') list = list.filter(x=>x.type===tFilter);
+      if(q.trim()){
+        const s=q.toLowerCase();
+        list = list.filter(x=> (x.en.toLowerCase().includes(s) || x.ar.includes(q)));
+      }
+      return list;
+    },[baseList,q,tFilter]);
+
+    const addExercise = (ex)=>{
+      setSession(s=> [...s, { id:uid(), ex, muscleId: ex._muscleId || muscle, sets:[] }]);
+    };
+
+    const addSet = (rowId)=>{
+      setSession(s=> s.map(r=>{
+        if(r.id!==rowId) return r;
+        const last = r.sets[r.sets.length-1] || { wkg:0, wlb:0, reps:10, effort:'medium', plate:'' };
+        return {...r, sets:[...r.sets, {...last, id:uid()}]};
+      }));
+    };
+    const copyLast = (rowId)=>{
+      setSession(s=> s.map(r=>{
+        if(r.id!==rowId || r.sets.length<1) return r;
+        const last = r.sets[r.sets.length-1];
+        return {...r, sets:[...r.sets, {...last, id:uid()}]};
+      }));
+    };
+    const removeExercise = (rowId)=> setSession(s=> s.filter(r=>r.id!==rowId));
+    const updateSet = (rowId,setId,patch)=>{
+      setSession(s=> s.map(r=>{
+        if(r.id!==rowId) return r;
+        const sets = r.sets.map(st=>{
+          if(st.id!==setId) return st;
+          if(patch.__delete) return null;
+          return {...st, ...patch};
+        }).filter(Boolean);
+        return {...r, sets};
+      }));
+    };
+
+    const totalVolumeKg = session.reduce((sum,row)=>
+      sum + row.sets.reduce((t,st)=> t + ((+st.wkg||0) * (+st.reps||0)),0)
+    ,0);
+
+    // إنهاء وحفظ الجلسة
+    const finishSave = ()=>{
+      if(!session.length){
+        alert("ما فيه تمارين محفوظة.");
+        return;
+      }
+      // تجميع حسب العضلة
+      const group = {};
+      for(const row of session){
+        const mId = row.muscleId || 'unknown';
+        if(!group[mId]){
+          const mObj = LIB.find(x=>x.id===mId);
+          group[mId] = {
+            muscleId: mId,
+            muscleNameAr: mObj?.ar || mId,
+            muscleNameEn: mObj?.en || mId,
+            totalVolumeKg: 0,
+            exercises: []
+          };
+        }
+        let exVol = 0;
+        for(const st of row.sets){
+          const kg = +st.wkg||0;
+          const reps = +st.reps||0;
+          exVol += (kg * reps);
+        }
+        group[mId].totalVolumeKg += exVol;
+        group[mId].exercises.push({
+          nameAr: row.ex.ar,
+          nameEn: row.ex.en,
+          type: row.ex.type,
+          volumeKg: round(exVol,1),
+          sets: row.sets.map(st=>({
+            wkg: st.wkg||0,
+            wlb: st.wlb||round(kgToLb(st.wkg||0),1),
+            reps: st.reps||0,
+            effort: st.effort||'medium',
+            plate: st.plate||''
+          }))
+        });
+      }
+
+      const musclesArr = Object.values(group);
+      const dayType = getDayTypeFromMuscles(musclesArr.map(m=>m.muscleId));
+      const dayTotal = round(musclesArr.reduce((a,g)=> a+(+g.totalVolumeKg||0),0),1);
+
+      const history = safeParse(localStorage.getItem('workout_history'),[]);
+      history.unshift({
+        id: uid(),
+        at: nowIso(),
+        unit: 'kg',
+        dayType,
+        totalVolumeKg: dayTotal,
+        muscles: musclesArr
+      });
+      localStorage.setItem('workout_history', JSON.stringify(history));
+
+      // نفرّغ مسودة اليوم
+      setSession([]);
+      saveDay("workout_draft", []);
+      alert('تم حفظ الجلسة ✅');
+    };
+
+    return (
+      <section className="space-y-3">
+        {/* شريط خيارات أعلى مصغّر */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
+            <label className="text-xs">{STR.system.ar}</label>
+            <input type="radio" name="pick" checked={mode==='system'} onChange={()=>setMode('system')} />
+            <span className="text-xs">({STR.chooseSystem.ar})</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs">{STR.muscle.ar}</label>
+            <input type="radio" name="pick" checked={mode==='muscle'} onChange={()=>setMode('muscle')} />
+            <span className="text-xs">({STR.chooseMuscle.ar})</span>
+          </div>
+
+          {mode==='system' ? (
+            <select value={system} onChange={e=>setSystem(e.target.value)} className="border rounded px-2 py-1 text-sm">
+              {DAY_SYSTEMS.map(d=><option key={d.id} value={d.id}>{d.ar}</option>)}
+            </select>
+          ) : (
+            <select value={muscle} onChange={e=>setMuscle(e.target.value)} className="border rounded px-2 py-1 text-sm">
+              {LIB.map(m=><option key={m.id} value={m.id}>{m.ar}</option>)}
+            </select>
+          )}
+
+          <label className="text-xs">{STR.typeFilter.ar}</label>
+          <select value={tFilter} onChange={e=>setTFilter(e.target.value)} className="border rounded px-2 py-1 text-sm">
+            <option value="all">{STR.all.ar}</option>
+            <option value="free">{STR.frees.ar}</option>
+            <option value="machine">{STR.machines.ar}</option>
+            <option value="cable">{STR.cables.ar}</option>
+          </select>
+
+          <input value={q} onChange={e=>setQ(e.target.value)} className="border rounded px-2 py-1 text-sm flex-1 min-w-[140px]" placeholder="ابحث..." />
+
+          <div className="ms-auto flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs">الوحدة:</span>
+              <select value={unit} onChange={e=>setUnit(e.target.value)} className="border rounded px-2 py-1 text-sm">
+                <option value="kg">kg</option>
+                <option value="lb">lb</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-xs">{STR.restTimer.ar}</span>
+              <RestTimerMini/>
             </div>
           </div>
-          {showSuggest && (
-            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-3" onClick={()=>setShowSuggest(false)}>
-              <div className="w-full max-w-md rounded-2xl border bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 p-4" onClick={(e)=>e.stopPropagation()}>
-                <div className="text-base font-semibold mb-2">{str('suggest')}</div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Field label={str('lastWeight')}><input type="number" step={step} value={cal.lastWeight} onChange={e=>setCal(c=>({...c,lastWeight:e.target.value}))} className="px-2 py-1 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700"/></Field>
-                  <Field label={str('lastReps')}><input type="number" step="1" value={cal.lastReps} onChange={e=>setCal(c=>({...c,lastReps:e.target.value}))} className="px-2 py-1 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700"/></Field>
-                  <Field label={str('targetReps')}><input type="number" step="1" value={cal.targetReps} onChange={e=>setCal(c=>({...c,targetReps:e.target.value}))} className="px-2 py-1 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700"/></Field>
-                </div>
-                <div className="mt-3 flex gap-2 justify-end">
-                  <button onClick={()=>setShowSuggest(false)} className="px-3 py-2 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700">{str('cancel')}</button>
-                  <button onClick={applySuggest} className="px-3 py-2 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white">{str('apply')}</button>
-                </div>
+        </div>
+
+        {/* كروت تمارين مصغّرة */}
+        <div className="grid gap-2"
+             style={{gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))"}}>
+          {exercises.map(ex=>(
+            <button key={ex.id}
+              onClick={()=>addExercise(ex)}
+              className="rounded-lg border bg-white/80 dark:bg-zinc-900 p-2 text-right hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 transition">
+              <div className="font-semibold text-sm truncate">{ex.ar}</div>
+              <div className="text-[11px] text-zinc-500 truncate">
+                {ex.en} · {ex.type==='free'?STR.free.ar:ex.type==='machine'?STR.machine.ar:STR.cable.ar}
+              </div>
+              {ex._muscleId && (
+                <div className="text-[11px] text-zinc-600 mt-1">{LIB_BY_ID.get(ex._muscleId)?.ar}</div>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* المسودة + المجموعات (مضغوطة) */}
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold text-sm">{STR.sets.ar}</div>
+            <div className="text-xs">{STR.totalVolume.ar}: <span className="font-semibold">{round(totalVolumeKg,1)} kg·rep</span></div>
+          </div>
+
+          {!session.length && (
+            <div className="text-xs text-zinc-500 mt-2">أضف تمارين من الأعلى ثم أضف مجموعات.</div>
+          )}
+
+          <div className="space-y-2 mt-2">
+            {session.map(row=>(
+              <ExerciseRow
+                key={row.id}
+                row={row}
+                unit={unit}
+                onRemove={()=> removeExercise(row.id)}
+                onAddSet={()=> addSet(row.id)}
+                onCopyLast={()=> copyLast(row.id)}
+                onUpdateSet={(setId,patch)=> updateSet(row.id,setId,patch)}
+              />
+            ))}
+          </div>
+
+          <div className="mt-3 flex items-center justify-end">
+            <button onClick={finishSave} className="px-4 py-2 rounded bg-emerald-600 text-white text-sm">
+              {STR.finishSave.ar}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+  // =========================
+  // END PART 3/10
+  // =========================
+</script>
+<!-- =========================
+      PART 4/10 — MEALS WITH TYPES
+     ========================= -->
+<script type="text/babel">
+  function Meals(){
+    const [meals,setMeals]=useState(()=> loadDay("meals_today", []));
+    useEffect(()=> saveDay("meals_today", meals),[meals]);
+
+    const [quick,setQuick]=useState('');
+    const [notice,setNotice]=useState('');
+    const [mealType,setMealType]=useState('breakfast');
+
+    const analyzeAndAdd=()=>{
+      setNotice('');
+      if(!quick.trim()) return;
+      const parts=parseMealLine(quick);
+      const resolved=parts.map(resolveFoodEntry);
+      const known = resolved.filter(r=>!r.unknown);
+      const unknown = resolved.filter(r=>r.unknown).map(r=>r.raw);
+      if(known.length){ 
+        const withType = known.map(k=>({...k, mealType}));
+        setMeals(m=>[...withType,...m]); 
+      }
+      if(unknown.length){ 
+        setNotice(`${STR.unknownFood.ar}: ${unknown.join('، ')}`); 
+      }
+      setQuick('');
+    };
+    const removeRow=(id)=> setMeals(m=>m.filter(x=>x.id!==id));
+
+    const totals=meals.reduce((t,m)=>({
+      cal:t.cal+(+m.cal||0),
+      p:t.p+(+m.p||0),
+      c:t.c+(+m.c||0),
+      f:t.f+(+m.f||0)
+    }),{cal:0,p:0,c:0,f:0});
+
+    return (
+      <section className="mt-4 space-y-4">
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-2">
+          <div className="font-semibold text-sm">{STR.quickAdd.ar}</div>
+          <div className="flex flex-wrap gap-2">
+            <select value={mealType} onChange={e=>setMealType(e.target.value)} className="border rounded px-2 py-1 text-sm">
+              <option value="breakfast">{STR.breakfast.ar}</option>
+              <option value="lunch">{STR.lunch.ar}</option>
+              <option value="dinner">{STR.dinner.ar}</option>
+              <option value="snack">{STR.snack.ar}</option>
+            </select>
+            <input value={quick} onChange={e=>setQuick(e.target.value)}
+              placeholder={STR.typeMealLine.ar}
+              className="flex-1 px-3 py-2 rounded-md border text-sm"/>
+            <button onClick={analyzeAndAdd}
+              className="px-3 py-2 rounded-md bg-indigo-600 text-white text-sm">
+              {STR.analyzeAdd.ar}
+            </button>
+          </div>
+          {notice && <div className="text-xs text-amber-600 mt-1">{notice}</div>}
+        </div>
+
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-zinc-100/60 dark:bg-zinc-800/60">
+              <tr>
+                <th className="p-2 text-right">{STR.mealType.ar}</th>
+                <th className="p-2 text-right">{STR.mealName.ar}</th>
+                <th className="p-2">{STR.calories.ar}</th>
+                <th className="p-2">{STR.protein.ar}</th>
+                <th className="p-2">{STR.carbs.ar}</th>
+                <th className="p-2">{STR.fat.ar}</th>
+                <th className="p-2">{STR.remove.ar}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {meals.map(m=>(
+                <tr key={m.id} className="border-t">
+                  <td className="p-2">{STR[m.mealType]?.ar || m.mealType}</td>
+                  <td className="p-2">{m.display} <span className="text-[11px] text-zinc-500">({m.amount})</span></td>
+                  <td className="p-2">{m.cal}</td>
+                  <td className="p-2">{m.p}</td>
+                  <td className="p-2">{m.c}</td>
+                  <td className="p-2">{m.f}</td>
+                  <td className="p-2"><button onClick={()=>removeRow(m.id)} className="text-red-600 hover:underline">{STR.remove.ar}</button></td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-zinc-100/60 dark:bg-zinc-800/60">
+              <tr>
+                <td className="p-2 font-semibold">{STR.totals.ar}</td>
+                <td />
+                <td className="p-2 font-semibold">{round(totals.cal,0)} {STR.kcal.ar}</td>
+                <td className="p-2 font-semibold">{round(totals.p,1)}g</td>
+                <td className="p-2 font-semibold">{round(totals.c,1)}g</td>
+                <td className="p-2 font-semibold">{round(totals.f,1)}g</td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+    );
+  }
+  // =========================
+  // END PART 4/10
+  // =========================
+</script>
+<!-- =========================
+      PART 5/10 — DAILY SUMMARY + APP
+     ========================= -->
+<script type="text/babel">
+  // === Goals / Profile helpers ===
+  function computeGoals(profile){
+    const p = profile || {};
+    const sexAdj = p.sex==='female' ? -161 : 5;
+    const weight = +p.weight||80, height=+p.height||175, age=+p.age||30;
+    let bmr = 10*weight + 6.25*height - 5*age + sexAdj;
+    const act = {sedentary:1.2, light:1.375, moderate:1.55, active:1.725, veryActive:1.9}[p.activity||'moderate']||1.55;
+    let tdee = bmr*act;
+    if(p.goal==='cut') tdee *= 0.85;
+    if(p.goal==='bulk') tdee *= 1.15;
+    tdee = Math.max(1200, tdee);
+
+    let leanKg = +p.muscle || (weight * (1 - (+p.bodyfat||0)/100));
+    leanKg = Math.max(30, leanKg||weight*0.75);
+
+    const protein = Math.round(2.2 * leanKg);
+    const fat = Math.round(0.8 * weight);
+    const calFromP = protein*4, calFromF = fat*9;
+    const carbs = Math.max(0, Math.round((tdee - calFromP - calFromF)/4));
+    return { cal: Math.round(tdee), p: protein, c: carbs, f: fat };
+  }
+
+  function Profile(){
+    const [profile,setProfile]=useState(()=> safeParse(localStorage.getItem('profile_v2'), {
+      age:30, sex:'male', height:175, weight:80, bodyfat:18, muscle:'', activity:'moderate', goal:'maintain'
+    }));
+    useEffect(()=> localStorage.setItem('profile_v2', JSON.stringify(profile)),[profile]);
+    const on = (k,v)=> setProfile(p=> ({...p,[k]:v}));
+    const goals = computeGoals(profile);
+
+    return (
+      <section className="space-y-3">
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="font-semibold mb-2">{STR.profile.ar}</div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+            <label>{STR.age.ar}<input type="number" className="w-full border rounded px-2 py-1" value={profile.age} onChange={e=>on('age',+e.target.value||0)}/></label>
+            <label>{STR.sex.ar}
+              <select className="w-full border rounded px-2 py-1" value={profile.sex} onChange={e=>on('sex',e.target.value)}>
+                <option value="male">{STR.male.ar}</option><option value="female">{STR.female.ar}</option>
+              </select>
+            </label>
+            <label>{STR.height.ar}<input type="number" className="w-full border rounded px-2 py-1" value={profile.height} onChange={e=>on('height',+e.target.value||0)}/></label>
+            <label>{STR.weight.ar}<input type="number" className="w-full border rounded px-2 py-1" value={profile.weight} onChange={e=>on('weight',+e.target.value||0)}/></label>
+            <label>{STR.bodyfat.ar}<input type="number" className="w-full border rounded px-2 py-1" value={profile.bodyfat} onChange={e=>on('bodyfat',+e.target.value||0)}/></label>
+            <label>{STR.muscleMass.ar}<input type="number" className="w-full border rounded px-2 py-1" value={profile.muscle} onChange={e=>on('muscle',e.target.value)}/></label>
+            <label>{STR.activity.ar}
+              <select className="w-full border rounded px-2 py-1" value={profile.activity} onChange={e=>on('activity',e.target.value)}>
+                <option value="sedentary">{STR.sedentary.ar}</option>
+                <option value="light">{STR.light.ar}</option>
+                <option value="moderate">{STR.moderate.ar}</option>
+                <option value="active">{STR.active.ar}</option>
+                <option value="veryActive">{STR.veryActive.ar}</option>
+              </select>
+            </label>
+            <label>{STR.goal.ar}
+              <select className="w-full border rounded px-2 py-1" value={profile.goal} onChange={e=>on('goal',e.target.value)}>
+                <option value="cut">{STR.cut.ar}</option>
+                <option value="maintain">{STR.maintain.ar}</option>
+                <option value="bulk">{STR.bulk.ar}</option>
+              </select>
+            </label>
+          </div>
+          <div className="mt-2 text-xs text-zinc-500">يتم حفظ بياناتك تلقائيًا.</div>
+        </div>
+
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="font-semibold mb-2">{STR.goals.ar}</div>
+          <div className="space-y-1 text-sm">
+            <div>السعرات: <b>{goals.cal}</b> {STR.kcal.ar}</div>
+            <div>البروتين: <b>{goals.p}</b> جم</div>
+            <div>الكاربوهيدرات: <b>{goals.c}</b> جم</div>
+            <div>الدهون: <b>{goals.f}</b> جم</div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // === Summary helpers ===
+  const EFFORT_SCORE = { easy:5, medium:7, hard:8.5, veryHard:9.5 };
+  function pickTodayWorkouts(){
+    const hist = safeParse(localStorage.getItem('workout_history'),[]);
+    const tk = todayKey();
+    return hist.filter(h => dateKey(h.at)===tk);
+  }
+  function lastSameDayType(beforeIso, dayType){
+    const hist = safeParse(localStorage.getItem('workout_history'),[]);
+    const before = new Date(beforeIso||Date.now());
+    const since = new Date(before); since.setDate(since.getDate()-21);
+    const cand = hist.filter(h=>{
+      const d = new Date(h.at);
+      return h.dayType===dayType && d<before && d>=since;
+    }).sort((a,b)=> new Date(b.at)-new Date(a.at));
+    return cand[0] || null;
+  }
+  function classifyWeights(todayTotal, refTotal){
+    if(!refTotal || refTotal<=0){
+      return { verdict:'كويسة 👍 (أول مرّة أو مافي مرجع)', color:'text-emerald-600' };
+    }
+    const ratio = todayTotal / refTotal;
+    if(ratio >= 1.02) return { verdict:'أفضل من آخر مرّة 💪', color:'text-emerald-600' };
+    if(ratio >= 0.90) return { verdict:'كويسة، قريب من آخر مرّة ✅', color:'text-amber-600' };
+    return { verdict:'خفيفة شوي — زوّد وزن/عدات 👀', color:'text-rose-600' };
+    // نضيف ضبط أدق لاحقًا لو حبيت
+  }
+
+  function Summary(){
+    // Meals today
+    const mealsToday = loadDay("meals_today", []);
+    const totals = mealsToday.reduce((t,m)=>({
+      cal:t.cal+(+m.cal||0), p:t.p+(+m.p||0), c:t.c+(+m.c||0), f:t.f+(+m.f||0)
+    }),{cal:0,p:0,c:0,f:0});
+
+    // Goals
+    const profile = safeParse(localStorage.getItem('profile_v2'), null);
+    const goals = computeGoals(profile||{});
+    const rem = {
+      cal: Math.max(0, Math.round(goals.cal - totals.cal)),
+      p: Math.max(0, Math.round(goals.p - totals.p)),
+      c: Math.max(0, Math.round(goals.c - totals.c)),
+      f: Math.max(0, Math.round(goals.f - totals.f)),
+    };
+
+    // Workout today (aggregate all today's saved sessions)
+    const todays = pickTodayWorkouts();
+    const totalVolumeKg = round(todays.reduce((a,h)=> a + (+h.totalVolumeKg||0), 0),1);
+    const dayTypes = Array.from(new Set(todays.map(h=>h.dayType)));
+    const dayType = dayTypes[0] || 'other';
+
+    // intensity (avg effort across today's sets)
+    let effSum=0, effCnt=0;
+    todays.forEach(h=>{
+      (h.muscles||[]).forEach(m=>{
+        (m.exercises||[]).forEach(ex=>{
+          (ex.sets||[]).forEach(st=>{
+            const sc = EFFORT_SCORE[st.effort||'medium']||7;
+            effSum += sc; effCnt += 1;
+          });
+        });
+      });
+    });
+    const avgEff = effCnt? (effSum/effCnt) : 0;
+    const intensity =
+      avgEff>=9   ? 'عالية جدًا 🔥' :
+      avgEff>=8   ? 'عالية 💥' :
+      avgEff>=7   ? 'متوسطة ✅' :
+      avgEff>0    ? 'خفيفة 🧊' :
+                    'لا يوجد تمرين اليوم';
+
+    // compare to last same day type
+    const lastRef = todays.length ? lastSameDayType(todays[0].at, dayType) : null;
+    const verdict = classifyWeights(totalVolumeKg, lastRef?.totalVolumeKg||0);
+
+    // per-muscle volumes
+    const perMuscle = {};
+    todays.forEach(h=>{
+      (h.muscles||[]).forEach(m=>{
+        perMuscle[m.muscleNameAr] = (perMuscle[m.muscleNameAr]||0) + (+m.totalVolumeKg||0);
+      });
+    });
+    const perMuscleArr = Object.entries(perMuscle).map(([name,v])=>({name, v:round(v,1)}))
+                          .sort((a,b)=>b.v-a.v);
+
+    return (
+      <section className="space-y-3">
+        <div className="text-sm text-zinc-500">التاريخ: {new Date().toLocaleString()}</div>
+
+        {/* Meals summary */}
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-1">
+          <div className="font-semibold">{STR.todaySummary.ar} — {STR.meals.ar}</div>
+          <div className="text-sm">
+            إجمالي: <b>{Math.round(totals.cal)}</b> {STR.kcal.ar} · بروتين <b>{Math.round(totals.p)}جم</b> · كارب <b>{Math.round(totals.c)}جم</b> · دهون <b>{Math.round(totals.f)}جم</b>
+          </div>
+          <div className="text-xs text-zinc-600">
+            الهدف: {goals.cal} {STR.kcal.ar} — P {goals.p}g · C {goals.c}g · F {goals.f}g
+          </div>
+          <ul className="text-sm mt-1 grid grid-cols-2 md:grid-cols-4 gap-1">
+            <li>🟣 المتبقي بروتين: <b>{rem.p}</b> جم</li>
+            <li>🟡 المتبقي كارب: <b>{rem.c}</b> جم</li>
+            <li>🟢 المتبقي دهون: <b>{rem.f}</b> جم</li>
+            <li>🔵 المتبقي سعرات: <b>{rem.cal}</b> {STR.kcal.ar}</li>
+          </ul>
+        </div>
+
+        {/* Workout summary */}
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-2">
+          <div className="font-semibold">{STR.todaySummary.ar} — {STR.workout.ar}</div>
+          <div className="text-sm">
+            نوع اليوم: <b>{DAY_AR[dayType] || 'أخرى'}</b> · الحجم الكلي: <b>{totalVolumeKg}</b> kg·rep
+          </div>
+          <div className={clx("text-sm", verdict.color)}>
+            الشدة: <b>{intensity}</b> — الأوزان: <b>{verdict.verdict}</b>
+          </div>
+          {lastRef && (
+            <div className="text-xs text-zinc-600">
+              مقارنة بآخر {DAY_AR[dayType]} ({new Date(lastRef.at).toLocaleDateString()}): {lastRef.totalVolumeKg} kg·rep
+            </div>
+          )}
+          {!!perMuscleArr.length && (
+            <div className="text-xs">
+              توزيع الحمل:
+              <div className="mt-1 grid grid-cols-2 md:grid-cols-3 gap-1">
+                {perMuscleArr.map((m,i)=>(
+                  <div key={i} className="flex justify-between bg-zinc-100/60 dark:bg-zinc-800/60 rounded px-2 py-1">
+                    <span>{m.name}</span><b>{m.v}</b>
+                  </div>
+                ))}
               </div>
             </div>
           )}
         </div>
-      );
-    }
+      </section>
+    );
+  }
 
-    // =============================
-    // Main App
-    // =============================
-    function App(){
-      const [lang, setLang] = useState('ar');
-      const dir = lang==='ar'? 'rtl':'ltr';
-      const [query, setQuery] = useState('');
-      const [activeMuscle, setActiveMuscle] = useState(LIB[0].id);
-      const [profile, setProfile] = useState(()=> safeParse(localStorage.getItem(LS.profile), { bodyWeight:'', height:'', exp:'beginner' }));
-      useEffect(()=> localStorage.setItem(LS.profile, JSON.stringify(profile)), [profile]);
-      const [settings, setSettings] = useState(()=> safeParse(localStorage.getItem(LS.settings), { stackStep:5, barStep:2.5, theme:'dark' }));
-      useEffect(()=> localStorage.setItem(LS.settings, JSON.stringify(settings)), [settings]);
-      useEffect(()=> { document.documentElement.classList.toggle('dark', settings.theme==='dark'); },[settings.theme]);
-      const [current, setCurrent] = useState(()=> safeParse(localStorage.getItem(LS.workout), { id: uid(), startedAt: nowIso(), items: [], note:'' }));
-      useEffect(()=> localStorage.setItem(LS.workout, JSON.stringify(current)), [current]);
-      const [history, setHistory] = useState(()=> safeParse(localStorage.getItem(LS.history), []));
-      useEffect(()=> localStorage.setItem(LS.history, JSON.stringify(history)), [history]);
+  // === History (basic with delete) ===
+  function History(){
+    const [hist,setHist]=useState(()=> safeParse(localStorage.getItem('workout_history'),[]));
+    const del = (id)=>{
+      const x = hist.filter(h=>h.id!==id);
+      localStorage.setItem('workout_history', JSON.stringify(x));
+      setHist(x);
+    };
+    if(!hist.length) return <div className="text-sm text-zinc-500">{STR.noSessions.ar}</div>;
+    return (
+      <div className="space-y-2">
+        {hist.map(h=>(
+          <div key={h.id} className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+            <div className="flex items-center justify-between">
+              <div className="font-semibold text-sm">جلسة · {new Date(h.at).toLocaleString()}</div>
+              <button onClick={()=>del(h.id)} className="text-rose-600 text-xs hover:underline">{STR.delete.ar}</button>
+            </div>
+            <div className="text-xs text-zinc-600 mt-1">
+              نوع اليوم: {DAY_AR[h.dayType]||'أخرى'} · الحجم: <b>{h.totalVolumeKg}</b> kg·rep
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
-      const muscle = useMemo(()=> LIB.find(m=>m.id===activeMuscle), [activeMuscle]);
-      const filtered = useMemo(()=> { const q=query.trim().toLowerCase(); if(!q) return muscle.exercises; return muscle.exercises.filter(e=> [e.en,e.ar].some(t=> t.toLowerCase().includes(q))); }, [query, muscle]);
-      const str = (k)=> STR[k]?.[lang] ?? k;
-      const addExercise = (ex)=> setCurrent(c=> ({ ...c, items: [...c.items, { id: uid(), exerciseId: ex.id, muscleId: muscle.id, type: ex.type, name:{ en: ex.en, ar: ex.ar }, sets:[{weight:'',reps:'',rpe:'',plate:''},{weight:'',reps:'',rpe:'',plate:''},{weight:'',reps:'',rpe:'',plate:''},{weight:'',reps:'',rpe:'',plate:''}], notes:'' }] }));
-      const updateItem = (id, patch)=> setCurrent(c=> ({ ...c, items: c.items.map(it=> it.id===id? { ...it, ...patch }: it) }));
-      const removeItem = (id)=> setCurrent(c=> ({ ...c, items: c.items.filter(it=> it.id!==id) }));
-      const totalVolume = useMemo(()=> current.items.reduce((sum,it)=> sum + it.sets.reduce((s,st)=> s + (Number(st.weight)||0)*(Number(st.reps)||0),0), 0), [current]);
-      const finishAndSave = ()=> { const session = { id: current.id, startedAt: current.startedAt, endedAt: nowIso(), items: current.items, note: current.note, profile, settings, volume: totalVolume }; setHistory(h=> [session, ...h]); setCurrent({ id: uid(), startedAt: nowIso(), items: [], note:'' }); alert(lang==='ar'? 'تم حفظ الجلسة':'Session saved'); };
-      const useAsTemplate = (session)=> setCurrent({ id: uid(), startedAt: nowIso(), items: session.items.map(it=> ({ ...it, id: uid(), sets: it.sets.map(()=> ({ weight:'', reps:'', rpe:'', plate:'' })) })), note:'' });
-      const deleteSession = (id)=> setHistory(h=> h.filter(s=> s.id!==id));
+  // === App + Tabs + Mount ===
+  function App(){
+    const [lang,setLang]=useState('ar');
+    const [tab,setTab]=useState('workout');
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-4">
+        <header className="flex justify-between py-3 border-b">
+          <h1 className="text-lg font-bold">Tracker</h1>
+          <select value={lang} onChange={e=>setLang(e.target.value)} className="border rounded px-2 text-sm">
+            <option value="ar">العربية</option><option value="en">English</option>
+          </select>
+        </header>
 
-      const [importText, setImportText] = useState('');
-      const doExport = ()=> { const data={ profile, settings, history }; const blob=new Blob([JSON.stringify(data,null,2)], {type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`workout_backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); };
-      const doImport = ()=> { try { const data=JSON.parse(importText); if(data.profile) setProfile(data.profile); if(data.settings) setSettings(data.settings); if(Array.isArray(data.history)) setHistory(data.history); alert(lang==='ar'? 'تم الاستيراد':'Imported'); } catch { alert(lang==='ar'? 'صيغة غير صحيحة':'Invalid JSON'); } };
+        <nav className="flex flex-wrap gap-2 py-2">
+          {[
+            {id:'workout',label:STR.workout.ar},
+            {id:'meals',label:STR.meals.ar},
+            {id:'summary',label:STR.summary.ar},
+            {id:'profile',label:STR.profile.ar},
+            {id:'history',label:STR.history.ar},
+          ].map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              className={clx("px-3 py-1 rounded text-sm", tab===t.id?"bg-indigo-600 text-white":"bg-gray-200")}>
+              {t.label}
+            </button>
+          ))}
+        </nav>
 
-      const [tab, setTab] = useState('workout');
+        {tab==='workout' && <Workout/>}
+        {tab==='meals' && <Meals/>}
+        {tab==='summary' && <Summary/>}
+        {tab==='profile' && <Profile/>}
+        {tab==='history' && <History/>}
+      </div>
+    );
+  }
 
-      return (
-        <div dir={dir} className="min-h-screen">
-          <div className="mx-auto max-w-4xl px-3 pb-24">
-            <header className="sticky top-0 z-20 backdrop-blur bg-zinc-50/70 dark:bg-zinc-950/70 border-b border-zinc-200 dark:border-zinc-800">
-              <div className="max-w-4xl mx-auto px-3 py-3 flex items-center justify-between gap-3">
-                <h1 className="text-xl font-bold tracking-tight">{str('appTitle')} <span className="opacity-70">/ {lang==='ar'? 'AR':'EN'}</span></h1>
-                <div className="flex items-center gap-2">
-                  <select className="px-2 py-1 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" value={lang} onChange={e=>setLang(e.target.value)}>
-                    <option value="ar">العربية</option>
-                    <option value="en">English</option>
-                  </select>
-                  <button onClick={()=> setSettings(s=> ({...s, theme: s.theme==='dark'? 'light':'dark'}))} className="px-2 py-1 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" title={settings.theme==='dark'? 'Light':'Dark'}>
-                    {settings.theme==='dark'? (lang==='ar'? 'نهاري':'Light') : (lang==='ar'? 'ليلي':'Dark')}
-                  </button>
-                </div>
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  // =========================
+  // END PART 5/10
+  // =========================
+</script>
+<!-- =========================
+      PART 6/10 — HISTORY + COMPARE
+     ========================= -->
+<script type="text/babel">
+  // ===== Helpers: weeks & grouping =====
+  function startOfWeekSunday(d){
+    const x = new Date(d);
+    const day = x.getDay(); // 0=Sun
+    x.setHours(0,0,0,0);
+    x.setDate(x.getDate() - day); // back to Sunday
+    return x;
+  }
+  function addDays(d, n){ const x = new Date(d); x.setDate(x.getDate()+n); return x; }
+  function inRange(date, start, end){
+    const t = new Date(date).getTime();
+    return t >= start.getTime() && t < end.getTime();
+  }
+  function weekLabel(d){
+    const s = startOfWeekSunday(d);
+    const e = addDays(s,6);
+    return `${s.toLocaleDateString()} → ${e.toLocaleDateString()}`;
+  }
+
+  function sliceWeek(hist, start){
+    const end = addDays(start,7);
+    return hist.filter(h => inRange(h.at, start, end));
+  }
+
+  function totalsByDayType(sessions){
+    const m = {};
+    sessions.forEach(h=>{
+      const t = h.dayType || 'other';
+      m[t] = (m[t]||0) + (+h.totalVolumeKg||0);
+    });
+    return m; // {push: 1234, pull: ...}
+  }
+
+  function toPairsSorted(obj){
+    return Object.entries(obj).map(([k,v])=>({id:k, total:round(v,1)})).sort((a,b)=>b.total-a.total);
+  }
+
+  // ===== Improved History with expand + delete =====
+  function History(){
+    const [hist,setHist]=useState(()=> safeParse(localStorage.getItem('workout_history'),[]));
+    const [open,setOpen]=useState({}); // id -> bool
+
+    const toggle = (id)=> setOpen(o=> ({...o, [id]: !o[id]}));
+    const del = (id)=>{
+      const x = hist.filter(h=>h.id!==id);
+      localStorage.setItem('workout_history', JSON.stringify(x));
+      setHist(x);
+    };
+
+    if(!hist.length) return <div className="text-sm text-zinc-500">{STR.noSessions.ar}</div>;
+
+    return (
+      <div className="space-y-2">
+        {hist.map(h=>(
+          <div key={h.id} className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+            <div className="flex items-center justify-between">
+              <div className="font-semibold text-sm">
+                جلسة · {new Date(h.at).toLocaleString()}
               </div>
-              <nav className="max-w-4xl mx-auto px-3 pb-2 flex gap-2 text-sm">
-                {[{id:'workout',t:str('workout')},{id:'history',t:str('history')},{id:'profile',t:str('profile')},{id:'backup',t:str('backup')}].map(t=> (
-                  <Pill key={t.id} active={tab===t.id} onClick={()=>setTab(t.id)}>{t.t}</Pill>
-                ))}
-              </nav>
-            </header>
+              <div className="flex items-center gap-2">
+                <span className="text-xs bg-zinc-100 dark:bg-zinc-800 rounded px-2 py-1">
+                  {STR.systemPlayed.ar}: {DAY_AR[h.dayType]||'أخرى'}
+                </span>
+                <button onClick={()=>toggle(h.id)} className="text-xs underline">{open[h.id]?'إخفاء':'عرض'}</button>
+                <button onClick={()=>del(h.id)} className="text-rose-600 text-xs hover:underline">{STR.delete.ar}</button>
+              </div>
+            </div>
+            <div className="text-xs text-zinc-600 mt-1">
+              الحجم: <b>{h.totalVolumeKg}</b> kg·rep
+            </div>
 
-            {tab==='workout' && (
-              <section className="mt-4">
-                <div className="flex gap-2 overflow-x-auto pb-2">
-                  {LIB.map(m=> (<Pill key={m.id} active={activeMuscle===m.id} onClick={()=>setActiveMuscle(m.id)}>{lang==='ar'? m.ar: m.en}</Pill>))}
-                </div>
-                <div className="mt-3"><input className="w-full px-3 py-2 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" placeholder={str('search')} value={query} onChange={e=>setQuery(e.target.value)} /></div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-                  {filtered.map(ex=> (
-                    <div key={ex.id} className="rounded-xl border bg-white/80 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 p-3">
-                      <div className="font-medium"><span className="block">{ex.en}</span><span className="block opacity-70">{ex.ar}</span></div>
-                      <div className="mt-2 text-xs opacity-70">{str('type')}: {str(ex.type)}</div>
-                      <div className="mt-2"><button onClick={()=>addExercise(ex)} className="w-full sm:w-auto px-3 py-2 rounded-md text-sm bg-indigo-600 hover:bg-indigo-700 text-white">{str('add')}</button></div>
-                    </div>
-                  ))}
-                </div>
-                {current.items.length>0 && (
-                  <div className="mt-6">
-                    <h2 className="text-lg font-semibold mb-2">{str('sets')}</h2>
-                    <div className="flex flex-col gap-4">
-                      {current.items.map((it,idx)=> (
-                        <ExerciseCard key={it.id} it={it} idx={idx} lang={lang} str={str} settings={settings} onChange={(patch)=> updateItem(it.id, patch)} onRemove={()=> removeItem(it.id)} />
-                      ))}
-                    </div>
-                    <div className="mt-6 flex items-center justify-between">
-                      <div className="text-sm opacity-80">Volume: <b>{Math.round(totalVolume)}</b></div>
-                      <button onClick={finishAndSave} className="px-4 py-2 rounded-md bg-green-600 hover:bg-green-700 text-white">{str('finishSave')}</button>
-                    </div>
-                  </div>
-                )}
-              </section>
-            )}
-
-            {tab==='history' && (
-              <section className="mt-4">
-                {history.length===0 && (<div className="opacity-70">{str('noSessions')}</div>)}
-                <div className="flex flex-col gap-3">
-                  {history.map(s=> (
-                    <div key={s.id} className="rounded-xl border bg-white/80 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <div className="font-semibold">{str('session')} · {new Date(s.startedAt).toLocaleString()}</div>
-                          <div className="text-sm opacity-80">Volume: {Math.round(s.volume)}</div>
+            {open[h.id] && (
+              <div className="mt-3 space-y-3">
+                {(h.muscles||[]).map((m, idx)=>(
+                  <div key={idx} className="border rounded-lg p-2">
+                    <div className="font-semibold text-sm mb-1">{m.muscleNameAr}</div>
+                    {(m.exercises||[]).map((ex, i)=>(
+                      <div key={i} className="mt-2">
+                        <div className="font-medium text-sm">
+                          {ex.nameAr}
+                          <span className="text-[11px] text-zinc-500"> ({ex.nameEn}) · {ex.type==='free'?'وزن حر':ex.type==='machine'?'جهاز':'كيبل'}</span>
                         </div>
-                        <div className="flex gap-2">
-                          <IconButton onClick={()=> alert(JSON.stringify(s,null,2))}>{str('view')}</IconButton>
-                          <IconButton onClick={()=> useAsTemplate(s)}>{str('useTemplate')}</IconButton>
-                          <IconButton onClick={()=> deleteSession(s.id)}>{str('delete')}</IconButton>
+                        <div className="text-[11px] text-zinc-500 mb-1">الحجم: {ex.volumeKg} kg·rep</div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead className="bg-zinc-100/60 dark:bg-zinc-800/60">
+                              <tr>
+                                <th className="p-1">{STR.weightKg.ar}</th>
+                                <th className="p-1">{STR.weightLb.ar}</th>
+                                <th className="p-1">{STR.reps.ar}</th>
+                                <th className="p-1">{STR.effort.ar}</th>
+                                <th className="p-1">{STR.plate.ar}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(ex.sets||[]).map((st, j)=>(
+                                <tr key={j} className="border-t">
+                                  <td className="p-1">{st.wkg}</td>
+                                  <td className="p-1">{st.wlb}</td>
+                                  <td className="p-1">{st.reps}</td>
+                                  <td className="p-1">
+                                    {st.effort==='easy'?'سهل':st.effort==='medium'?'متوسط':st.effort==='hard'?'صعب':'صعب جدًا'}
+                                  </td>
+                                  <td className="p-1">{st.plate||'-'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
+                    ))}
+                  </div>
+                ))}
+              </div>
             )}
-
-            {tab==='profile' && (
-              <section className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Field label={str('bodyWeight')}><input className="px-3 py-2 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" type="number" step="0.1" value={profile.bodyWeight} onChange={e=> setProfile(p=> ({...p, bodyWeight: e.target.value}))} /></Field>
-                <Field label={str('height')}><input className="px-3 py-2 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" type="number" step="0.1" value={profile.height} onChange={e=> setProfile(p=> ({...p, height: e.target.value}))} /></Field>
-                <Field label={str('experience')}>
-                  <select className="px-3 py-2 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" value={profile.exp} onChange={e=> setProfile(p=> ({...p, exp: e.target.value}))}>
-                    <option value="beginner">{str('beginner')}</option>
-                    <option value="intermediate">{str('intermediate')}</option>
-                    <option value="advanced">{str('advanced')}</option>
-                  </select>
-                </Field>
-                <Field label={str('stackStep')}><input className="px-3 py-2 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" type="number" step="0.5" value={settings.stackStep} onChange={e=> setSettings(s=> ({...s, stackStep: Number(e.target.value)}))} /></Field>
-                <Field label={str('barbellStep')}><input className="px-3 py-2 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" type="number" step="0.5" value={settings.barStep} onChange={e=> setSettings(s=> ({...s, barStep: Number(e.target.value)}))} /></Field>
-                <div className="sm:col-span-2"><button onClick={()=> alert(lang==='ar'? 'تم الحفظ':'Saved')} className="px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white">{str('saveProfile')}</button></div>
-              </section>
-            )}
-
-            {tab==='backup' && (
-              <section className="mt-4">
-                <div className="flex flex-wrap gap-2"><button onClick={doExport} className="px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white">{str('exportJson')}</button></div>
-                <div className="mt-4">
-                  <Field label={str('importJson')}><textarea className="w-full min-h-[180px] px-3 py-2 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700" placeholder={str('dataHere')} value={importText} onChange={e=> setImportText(e.target.value)} /></Field>
-                  <div className="mt-2 flex gap-2"><button onClick={doImport} className="px-4 py-2 rounded-md bg-green-600 hover:bg-green-700 text-white">{str('apply')}</button><button onClick={()=> setImportText('')} className="px-4 py-2 rounded-md border bg-white/80 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700">{str('cancel')}</button></div>
-                </div>
-              </section>
-            )}
-
-            <div className="h-14" />
           </div>
-        </div>
-      );
+        ))}
+      </div>
+    );
+  }
+
+  // ===== Compare Page (weekly + next-week targets) =====
+  function Compare(){
+    const hist = safeParse(localStorage.getItem('workout_history'),[]);
+    if(!hist.length){
+      return <div className="text-sm text-zinc-500">لا يوجد سجل للمقارنة بعد.</div>;
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
-  </script>
-</body>
-</html>
+    const thisStart = startOfWeekSunday(new Date());
+    const prevStart = addDays(thisStart, -7);
+
+    const thisWeek = sliceWeek(hist, thisStart);
+    const prevWeek = sliceWeek(hist, prevStart);
+
+    const thisTotal = round(thisWeek.reduce((a,h)=>a+(+h.totalVolumeKg||0),0),1);
+    const prevTotal = round(prevWeek.reduce((a,h)=>a+(+h.totalVolumeKg||0),0),1);
+
+    const thisByType = totalsByDayType(thisWeek);
+    const prevByType = totalsByDayType(prevWeek);
+
+    const [filterType,setFilterType] = useState('all');
+
+    // اقتراح بسيط للأسبوع القادم: استهدف +3% من الأعلى بين هذا/الماضي لكل نظام
+    const nextTargets = {};
+    const allTypes = Array.from(new Set([...Object.keys(prevByType), ...Object.keys(thisByType), 'push','pull','legs','upper','lower','core','other']));
+    allTypes.forEach(t=>{
+      const base = Math.max(+thisByType[t]||0, +prevByType[t]||0);
+      if(base>0) nextTargets[t] = round(base*1.03,1);
+    });
+
+    const recent10 = hist.slice(0,10).map(h=>({
+      at: new Date(h.at),
+      dayType: h.dayType||'other',
+      total: h.totalVolumeKg||0
+    }));
+
+    const rowsThis = toPairsSorted(thisByType);
+    const rowsPrev = toPairsSorted(prevByType);
+
+    const growth = (thisTotal && prevTotal) ? round((thisTotal-prevTotal)/Math.max(prevTotal,1)*100,1) : null;
+
+    return (
+      <section className="space-y-3">
+        <div className="text-sm text-zinc-500">المقارنة الأسبوعية (الأسبوع يبدأ الأحد)</div>
+
+        {/* Cards: This week vs Last week */}
+        <div className="grid sm:grid-cols-2 gap-2">
+          <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+            <div className="font-semibold">{STR.weekCompare.ar} — هذا الأسبوع</div>
+            <div className="text-sm mt-1">{weekLabel(thisStart)}</div>
+            <div className="text-sm mt-2">الحجم الكلي: <b>{thisTotal}</b> kg·rep</div>
+            <div className="text-xs text-zinc-600">عدد الجلسات: {thisWeek.length}</div>
+          </div>
+          <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+            <div className="font-semibold">{STR.weekCompare.ar} — الأسبوع الماضي</div>
+            <div className="text-sm mt-1">{weekLabel(prevStart)}</div>
+            <div className="text-sm mt-2">الحجم الكلي: <b>{prevTotal}</b> kg·rep</div>
+            <div className="text-xs text-zinc-600">عدد الجلسات: {prevWeek.length}</div>
+            {growth!==null && <div className={clx("mt-1 text-xs", growth>=0?"text-emerald-600":"text-rose-600")}>
+              التغيّر: <b>{growth}%</b>
+            </div>}
+          </div>
+        </div>
+
+        {/* By day type table */}
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">الحجم حسب النظام</div>
+            <div className="flex items-center gap-2 text-sm">
+              <span>فلتر:</span>
+              <select value={filterType} onChange={e=>setFilterType(e.target.value)} className="border rounded px-2 py-1 text-sm">
+                <option value="all">الكل</option>
+                {['push','pull','legs','upper','lower','core','other'].map(t=>(
+                  <option key={t} value={t}>{DAY_AR[t]||t}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto mt-2">
+            <table className="w-full text-xs">
+              <thead className="bg-zinc-100/60 dark:bg-zinc-800/60">
+                <tr>
+                  <th className="p-2 text-right">النظام</th>
+                  <th className="p-2">هذا الأسبوع</th>
+                  <th className="p-2">الأسبوع الماضي</th>
+                  <th className="p-2">المستهدف (الأسبوع القادم)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {['push','pull','legs','upper','lower','core','other'].map(t=>{
+                  if(filterType!=='all' && filterType!==t) return null;
+                  const a = round(thisByType[t]||0,1);
+                  const b = round(prevByType[t]||0,1);
+                  const n = nextTargets[t]||0;
+                  return (
+                    <tr key={t} className="border-t">
+                      <td className="p-2">{DAY_AR[t]||t}</td>
+                      <td className="p-2">{a}</td>
+                      <td className="p-2">{b}</td>
+                      <td className="p-2">{n>0? n : '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Recent sessions list with system name */}
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="font-semibold mb-2">آخر 10 جلسات</div>
+          <div className="grid md:grid-cols-2 gap-2">
+            {recent10.map((r,i)=>(
+              <div key={i} className="border rounded-lg px-3 py-2 text-sm flex items-center justify-between">
+                <div>
+                  <div className="font-medium">{r.at.toLocaleString()}</div>
+                  <div className="text-xs text-zinc-600">{STR.systemPlayed.ar}: {DAY_AR[r.dayType]||'أخرى'}</div>
+                </div>
+                <div className="text-xs">الحجم: <b>{round(r.total,1)}</b></div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Simple next week note */}
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 text-sm">
+          <div className="font-semibold mb-1">ملاحظة للأسبوع القادم</div>
+          <div className="text-zinc-700 dark:text-zinc-300">
+            استهدف الحفاظ على نفس عدد الجلسات ورفع الحجم ~<b>+3%</b> للأنظمة الظاهرة في الجدول كمستهدف.  
+            لو حسّيت الشدة عالية جدًا، خفّف للـ +1% أو ثبّت.
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // ===== Re-define App to add Compare tab =====
+  function App(){
+    const [lang,setLang]=useState('ar');
+    const [tab,setTab]=useState('workout');
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-4">
+        <header className="flex justify-between py-3 border-b">
+          <h1 className="text-lg font-bold">Tracker</h1>
+          <select value={lang} onChange={e=>setLang(e.target.value)} className="border rounded px-2 text-sm">
+            <option value="ar">العربية</option><option value="en">English</option>
+          </select>
+        </header>
+
+        <nav className="flex flex-wrap gap-2 py-2">
+          {[
+            {id:'workout',label:STR.workout.ar},
+            {id:'meals',label:STR.meals.ar},
+            {id:'summary',label:STR.summary.ar},
+            {id:'compare',label:STR.compare.ar},
+            {id:'history',label:STR.history.ar},
+            {id:'profile',label:STR.profile.ar},
+          ].map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              className={clx("px-3 py-1 rounded text-sm", tab===t.id?"bg-indigo-600 text-white":"bg-gray-200")}>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+
+        {tab==='workout' && <Workout/>}
+        {tab==='meals' && <Meals/>}
+        {tab==='summary' && <Summary/>}
+        {tab==='compare' && <Compare/>}
+        {tab==='history' && <History/>}
+        {tab==='profile' && <Profile/>}
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  // =========================
+  // END PART 6/10
+  // =========================
+</script>
+<!-- =========================
+      PART 7/10 — FOOD DB + SMART SUGGESTIONS
+     ========================= -->
+<script type="text/babel">
+  // ===== Food DB & Parsing (Arabic/English) =====
+  // per100: {cal, p, c, f}, units: g, ml, cup, tbsp, tsp, piece, slice, egg, scoop, date, half, handful, can
+  const FOOD_DB = [
+    // Proteins
+    { id:'chicken_breast', aliases:['صدور دجاج','دجاج','chicken breast','chicken'], per100:{cal:165,p:31,c:0,f:3.6}, units:{g:1, piece:150} },
+    { id:'beef_lean', aliases:['لحم بقري قليل الدهن','لحم','beef lean','beef'], per100:{cal:176,p:26,c:0,f:7}, units:{g:1} },
+    { id:'ground_beef_10', aliases:['لحم مفروم 10%','ground beef 10%'], per100:{cal:217,p:26,c:0,f:12}, units:{g:1} },
+    { id:'turkey_breast', aliases:['صدور ديك رومي','turkey breast'], per100:{cal:135,p:29,c:0,f:1}, units:{g:1} },
+    { id:'tuna_canned', aliases:['تونة','tuna'], per100:{cal:132,p:29,c:0,f:1}, units:{g:1, can:140} },
+    { id:'salmon', aliases:['سالمون','salmon'], per100:{cal:208,p:20,c:0,f:13}, units:{g:1} },
+    { id:'shrimp', aliases:['روبيان','جمبري','shrimp'], per100:{cal:99,p:24,c:0.2,f:0.3}, units:{g:1} },
+    { id:'egg_whole', aliases:['بيض','بيضة','egg','eggs'], per100:{cal:155,p:13,c:1.1,f:11}, units:{g:1, egg:50} },
+    { id:'egg_white', aliases:['بياض بيض','egg white'], per100:{cal:52,p:10.9,c:0.7,f:0.2}, units:{g:1, egg:33} },
+    { id:'greek_yogurt', aliases:['زبادي يوناني','greek yogurt','زبادي عالي البروتين'], per100:{cal:59,p:10,c:3.6,f:0.4}, units:{g:1, cup:150} },
+    { id:'labneh', aliases:['لبنة','labneh'], per100:{cal:174,p:10,c:7,f:12}, units:{g:1, tbsp:15} },
+    { id:'protein_milk', aliases:['حليب بروتين','protein milk'], per100:{cal:60,p:10,c:2,f:1}, units:{ml:1, cup:240} },
+    { id:'whey_scoop', aliases:['واي','بروتين واي','whey','whey protein','scoop'], per100:{cal:400,p:80,c:10,f:6}, units:{g:1, scoop:30} },
+
+    // Carbs / starches
+    { id:'rice_cooked', aliases:['رز','أرز','rice'], per100:{cal:130,p:2.7,c:28,f:0.3}, units:{g:1, cup:160} },
+    { id:'pasta_cooked', aliases:['مكرونة مطبوخة','باستا مطبوخة','pasta cooked'], per100:{cal:157,p:5.8,c:30.6,f:0.9}, units:{g:1, cup:140} },
+    { id:'oats_dry', aliases:['شوفان','oats'], per100:{cal:379,p:13.2,c:67.7,f:6.5}, units:{g:1, cup:80, tbsp:6} },
+    { id:'bread_white_slice', aliases:['توست','خبز توست','white bread','toast'], per100:{cal:265,p:9,c:49,f:3.2}, units:{g:1, slice:25} },
+    { id:'brown_bread_slice', aliases:['توست بني','خبز بني','brown bread'], per100:{cal:247,p:8.6,c:41.2,f:4.2}, units:{g:1, slice:28} },
+    { id:'pita', aliases:['خبز عربي','خبز صامولي','pita bread'], per100:{cal:275,p:9,c:55,f:1.2}, units:{g:1, piece:60} },
+    { id:'tamees', aliases:['تميس','tamees'], per100:{cal:280,p:8.5,c:54,f:3.4}, units:{g:1, piece:250, half:125} },
+    { id:'banana', aliases:['موز','banana'], per100:{cal:89,p:1.1,c:22.8,f:0.3}, units:{g:1, piece:120} },
+    { id:'apple', aliases:['تفاح','apple'], per100:{cal:52,p:0.3,c:14,f:0.2}, units:{g:1, piece:182} },
+    { id:'dates', aliases:['تمر','dates'], per100:{cal:282,p:2.5,c:75,f:0.4}, units:{g:1, date:8} },
+    { id:'sweet_potato', aliases:['بطاطس حلوة','sweet potato'], per100:{cal:86,p:1.6,c:20.1,f:0.1}, units:{g:1} },
+    { id:'mashed_potato', aliases:['بطاطس مهروس','mashed potato'], per100:{cal:90,p:2,c:21,f:0.2}, units:{g:1, cup:210} },
+    { id:'lentil_soup', aliases:['شوربة عدس','عدس','lentil soup'], per100:{cal:101,p:7.6,c:17,f:0.4}, units:{g:1, cup:198} },
+    { id:'beans_foul', aliases:['فول','فول مدمس','fava beans','foul'], per100:{cal:110,p:7.6,c:19.6,f:0.4}, units:{g:1, cup:182} },
+    { id:'hummus', aliases:['حمص','حمص بطحينة','hummus'], per100:{cal:166,p:7.9,c:14.3,f:9.6}, units:{g:1, tbsp:15, cup:246} },
+
+    // Fats / snacks / dairy
+    { id:'olive_oil', aliases:['زيت زيتون','olive oil'], per100:{cal:884,p:0,c:0,f:100}, units:{g:1, tbsp:13.5, tsp:4.5} },
+    { id:'peanut_butter', aliases:['زبدة الفول','peanut butter'], per100:{cal:588,p:25,c:20,f:50}, units:{g:1, tbsp:16} },
+    { id:'almonds', aliases:['لوز','almonds'], per100:{cal:579,p:21,c:22,f:50}, units:{g:1, handful:30} },
+    { id:'avocado', aliases:['افوكادو','avocado'], per100:{cal:160,p:2,c:9,f:15}, units:{g:1, piece:200, half:100} },
+    { id:'milk_low', aliases:['حليب قليل الدسم','milk low fat','milk'], per100:{cal:42,p:3.4,c:5,f:1}, units:{ml:1, cup:240} },
+    { id:'laban', aliases:['لبن','laban'], per100:{cal:62,p:3.3,c:4.7,f:3.3}, units:{ml:1, cup:250} },
+    { id:'kiri', aliases:['كيري','جبن كيري','kiri'], per100:{cal:300,p:6,c:4,f:28}, units:{g:1, piece:18} },
+    { id:'labna_triangle', aliases:['جبنة مثلثات','مثلثات','cheese triangle'], per100:{cal:290,p:10,c:4,f:25}, units:{g:1, piece:15} },
+  ];
+
+  // Map names to food items (case/Arabic-insensitive)
+  const FOOD_INDEX = (()=> {
+    const idx = new Map();
+    const norm = s => (s||'').toString().trim().toLowerCase();
+    FOOD_DB.forEach(item=>{ item.aliases.forEach(a=> idx.set(norm(a), item)); });
+    return { get:(name)=> idx.get(norm(name)) };
+  })();
+
+  // Unit synonyms
+  const UNIT_SYNONYMS = {
+    g:['g','gram','grams','جم','غ','ج','جرام','غم'],
+    ml:['ml','مل','مليلتر'],
+    cup:['cup','cups','كوب'],
+    tbsp:['tbsp','tablespoon','ملعقة كبيرة','م ك','م-ك'],
+    tsp:['tsp','teaspoon','ملعقة صغيرة','م ص','م-ص'],
+    piece:['piece','pieces','حبة','حبه','قطعة','قطعه'],
+    slice:['slice','slices','شريحة','شرائح'],
+    egg:['egg','eggs','بيضة','بيضه','بيض'],
+    scoop:['scoop','سكوب','مكيال'],
+    date:['date','dates','تمرة','تمره','تمرات'],
+    half:['half','نصف','نص'],
+    handful:['handful','قبضة','حفنة'],
+    can:['can','علبة','عُلبة'],
+  };
+  const normalizeUnit = (u)=>{
+    if(!u) return null;
+    u = (u||'').toString().trim().toLowerCase();
+    for(const [key, list] of Object.entries(UNIT_SYNONYMS)){
+      if(list.includes(u)) return key;
+    }
+    return u; // fallback raw
+  };
+
+  const SPLIT_RE = /[,،+]+|\b(?:و|مع)\b/g;
+
+  function parseOnePart(raw){
+    const s = raw.trim().replace(/\s+/g,' ');
+    // Arabic digits → English
+    const arToEn = t => t.replace(/[٠-٩]/g, d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/٬/g,'.');
+    const text = arToEn(s);
+
+    // amount unit name  => "150 g رز"
+    let m = text.match(/^(\d+(?:\.\d+)?)\s*([^\d\s]+)?\s+(.+)$/);
+    if(m){
+      let amount = parseFloat(m[1])||0;
+      let unit = normalizeUnit(m[2]||'g');
+      let name = m[3].trim();
+      if(['half'].includes(unit)){ amount = 0.5; unit='piece'; }
+      return { name, amount, unit };
+    }
+    // name amount unit  => "رز 150 جم" | "توست 2 شريحة"
+    m = text.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*([^\d\s]+)?$/);
+    if(m){
+      let name = m[1].trim();
+      let amount = parseFloat(m[2])||0;
+      let unit = normalizeUnit(m[3]||null);
+      if(!unit){ unit = 'auto'; }
+      return { name, amount, unit };
+    }
+    // "نص تميس" / "half avocado"
+    m = text.match(/^(?:half|نصف|نص)\s+(.+)$/i);
+    if(m){ return { name:m[1].trim(), amount:0.5, unit:'piece' }; }
+
+    // fallback: only name => 100g
+    return { name:text.trim(), amount:100, unit:'g' };
+  }
+
+  function parseMealLine(line){
+    const parts = (line||'').split(SPLIT_RE).map(s=>s.trim()).filter(Boolean);
+    return parts.map(parseOnePart);
+  }
+
+  function toGrams(food, amount, unit){
+    if(!food) return null;
+    if(unit==='auto'){
+      if(food.units.piece) return amount * food.units.piece;
+      if(food.units.slice) return amount * food.units.slice;
+      if(food.units.egg) return amount * food.units.egg;
+      if(food.units.date) return amount * food.units.date;
+      if(food.units.can) return amount * food.units.can;
+      return amount; // assume g
+    }
+    const key = normalizeUnit(unit||'g');
+    const mult = food.units[key] || (key==='g'?1:null);
+    if(!mult) return null;
+    return amount*mult;
+  }
+
+  function resolveFoodEntry(entry){
+    const food = FOOD_INDEX.get(entry.name);
+    if(!food) return {unknown:true, raw:entry.name};
+    const grams = toGrams(food, entry.amount, entry.unit);
+    if(!grams && grams!==0) return {unknown:true, raw:entry.name};
+    const ratio = grams/100;
+    const {cal,p,c,f} = food.per100;
+    return {
+      id:uid(), foodId:food.id, display:entry.name,
+      amount:round(grams,0)+'g',
+      cal: round(cal*ratio,1),
+      p: round(p*ratio,1),
+      c: round(c*ratio,1),
+      f: round(f*ratio,1),
+    };
+  }
+
+  // ===== Smart suggestions based on remaining macros =====
+  const SUGGEST_SETS = {
+    protein: ['chicken_breast','tuna_canned','whey_scoop','greek_yogurt','egg_whole','egg_white'],
+    carbs: ['rice_cooked','banana','oats_dry','pasta_cooked','sweet_potato','bread_white_slice'],
+    fats: ['olive_oil','almonds','peanut_butter','avocado','labneh']
+  };
+  function foodById(id){ return FOOD_DB.find(x=>x.id===id); }
+  function gramsPer(food, prefUnit){
+    if(food.units[prefUnit]) return food.units[prefUnit];
+    const order=['piece','slice','scoop','egg','cup','tbsp','date','handful','g','ml','can','half'];
+    for(const u of order){ if(food.units[u]) return food.units[u]; }
+    return 100;
+  }
+  function macroPer(food, grams){
+    const r = grams/100;
+    const {cal,p,c,f}=food.per100;
+    return { cal:cal*r, p:p*r, c:c*r, f:f*r };
+  }
+  function suggestFor(target, remain){
+    if(remain<=0) return [];
+    const ids = SUGGEST_SETS[target] || [];
+    const out=[];
+    for(const id of ids){
+      const f = foodById(id); if(!f) continue;
+      const gramsUnit = gramsPer(f, target==='fats'?'tbsp':'g');
+      const per = target==='protein'? macroPer(f, gramsUnit).p
+                 : target==='carbs' ? macroPer(f, gramsUnit).c
+                 : macroPer(f, gramsUnit).f;
+      if(per<=0) continue;
+      const pieces = Math.max(1, Math.round(remain / per));
+      const grams = pieces * gramsUnit;
+      const m = macroPer(f, grams);
+      out.push({
+        id, label: f.aliases[0], grams: Math.round(grams),
+        p: Math.round(m.p), c: Math.round(m.c), f: Math.round(m.f), cal: Math.round(m.cal)
+      });
+    }
+    // leaner first
+    return out.sort((a,b)=> a.cal - b.cal).slice(0,3);
+  }
+
+  // ===== Improved Summary with suggestions & cleaner cards =====
+  // نعيد تعريف Summary بالكامل (يطغى على التعريف السابق)
+  const EFFORT_SCORE = { easy:5, medium:7, hard:8.5, veryHard:9.5 };
+  function pickTodayWorkouts(){
+    const hist = safeParse(localStorage.getItem('workout_history'),[]);
+    const tk = todayKey();
+    return hist.filter(h => dateKey(h.at)===tk);
+  }
+  function lastSameDayType(beforeIso, dayType){
+    const hist = safeParse(localStorage.getItem('workout_history'),[]);
+    const before = new Date(beforeIso||Date.now());
+    const since = new Date(before); since.setDate(since.getDate()-21);
+    const cand = hist.filter(h=>{
+      const d = new Date(h.at);
+      return h.dayType===dayType && d<before && d>=since;
+    }).sort((a,b)=> new Date(b.at)-new Date(a.at));
+    return cand[0] || null;
+  }
+  function classifyWeights(todayTotal, refTotal){
+    if(!refTotal || refTotal<=0){
+      return { verdict:'كويسة 👍 (أول مرّة أو مافي مرجع)', color:'text-emerald-600' };
+    }
+    const ratio = todayTotal / refTotal;
+    if(ratio >= 1.02) return { verdict:'أفضل من آخر مرّة 💪', color:'text-emerald-600' };
+    if(ratio >= 0.90) return { verdict:'كويسة، قريب من آخر مرّة ✅', color:'text-amber-600' };
+    return { verdict:'خفيفة شوي — زوّد وزن/عدات 👀', color:'text-rose-600' };
+  }
+
+  function Summary(){
+    // Meals today
+    const mealsToday = loadDay("meals_today", []);
+    const totals = mealsToday.reduce((t,m)=>({
+      cal:t.cal+(+m.cal||0), p:t.p+(+m.p||0), c:t.c+(+m.c||0), f:t.f+(+m.f||0)
+    }),{cal:0,p:0,c:0,f:0});
+
+    // Goals & remaining
+    const profile = safeParse(localStorage.getItem('profile_v2'), null);
+    const goals = computeGoals(profile||{});
+    const rem = {
+      cal: Math.max(0, Math.round(goals.cal - totals.cal)),
+      p: Math.max(0, Math.round(goals.p - totals.p)),
+      c: Math.max(0, Math.round(goals.c - totals.c)),
+      f: Math.max(0, Math.round(goals.f - totals.f)),
+    };
+
+    // Suggestions
+    const protSug = suggestFor('protein', rem.p);
+    const carbSug = suggestFor('carbs', rem.c);
+    const fatSug  = suggestFor('fats', rem.f);
+
+    // Workout today
+    const todays = pickTodayWorkouts();
+    const totalVolumeKg = round(todays.reduce((a,h)=> a + (+h.totalVolumeKg||0), 0),1);
+    const dayTypes = Array.from(new Set(todays.map(h=>h.dayType)));
+    const dayType = dayTypes[0] || 'other';
+
+    // intensity
+    let effSum=0, effCnt=0;
+    todays.forEach(h=>{
+      (h.muscles||[]).forEach(m=>{
+        (m.exercises||[]).forEach(ex=>{
+          (ex.sets||[]).forEach(st=>{
+            const sc = EFFORT_SCORE[st.effort||'medium']||7;
+            effSum += sc; effCnt += 1;
+          });
+        });
+      });
+    });
+    const avgEff = effCnt? (effSum/effCnt) : 0;
+    const intensity =
+      avgEff>=9   ? 'عالية جدًا 🔥' :
+      avgEff>=8   ? 'عالية 💥' :
+      avgEff>=7   ? 'متوسطة ✅' :
+      avgEff>0    ? 'خفيفة 🧊' :
+                    'لا يوجد تمرين اليوم';
+
+    const lastRef = todays.length ? lastSameDayType(todays[0].at, dayType) : null;
+    const verdict = classifyWeights(totalVolumeKg, lastRef?.totalVolumeKg||0);
+
+    // per-muscle volumes
+    const perMuscle = {};
+    todays.forEach(h=>{
+      (h.muscles||[]).forEach(m=>{
+        perMuscle[m.muscleNameAr] = (perMuscle[m.muscleNameAr]||0) + (+m.totalVolumeKg||0);
+      });
+    });
+    const perMuscleArr = Object.entries(perMuscle).map(([name,v])=>({name, v:round(v,1)}))
+                          .sort((a,b)=>b.v-a.v);
+
+    return (
+      <section className="space-y-3">
+        <div className="text-sm text-zinc-500">التاريخ: {new Date().toLocaleString()}</div>
+
+        {/* Meals summary + suggestions */}
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-2">
+          <div className="font-semibold">{STR.todaySummary.ar} — {STR.meals.ar}</div>
+          <div className="text-sm">
+            إجمالي: <b>{Math.round(totals.cal)}</b> {STR.kcal.ar} · بروتين <b>{Math.round(totals.p)}جم</b> · كارب <b>{Math.round(totals.c)}جم</b> · دهون <b>{Math.round(totals.f)}جم</b>
+          </div>
+          <div className="text-xs text-zinc-600">
+            الهدف: {goals.cal} {STR.kcal.ar} — P {goals.p}g · C {goals.c}g · F {goals.f}g
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-2 mt-1">
+            <div className="rounded-lg border bg-zinc-50 dark:bg-zinc-800/60 p-2">
+              <div className="font-semibold text-sm mb-1">المتبقي للأهداف</div>
+              <ul className="text-sm space-y-1">
+                <li>🟣 بروتين: <b>{rem.p}</b> جم</li>
+                <li>🟡 كارب: <b>{rem.c}</b> جم</li>
+                <li>🟢 دهون: <b>{rem.f}</b> جم</li>
+                <li>🔵 سعرات: <b>{rem.cal}</b> {STR.kcal.ar}</li>
+              </ul>
+            </div>
+
+            <div className="rounded-lg border bg-zinc-50 dark:bg-zinc-800/60 p-2">
+              <div className="font-semibold text-sm mb-1">{STR.suggestions.ar}</div>
+              <div className="space-y-1 text-sm">
+                <div>
+                  <div className="font-semibold">بروتين</div>
+                  {protSug.length ? protSug.map(s=>(
+                    <div key={s.id} className="flex justify-between">
+                      <span>{STR.addThese.ar} {s.label} {s.grams}جم</span>
+                      <span className="text-zinc-600">P{s.p} C{s.c} F{s.f} · {s.cal}{STR.kcal.ar}</span>
+                    </div>
+                  )) : <div className="text-zinc-500">لا يوجد نقص.</div>}
+                </div>
+                <div>
+                  <div className="font-semibold">كاربوهيدرات</div>
+                  {carbSug.length ? carbSug.map(s=>(
+                    <div key={s.id} className="flex justify-between">
+                      <span>{STR.addThese.ar} {s.label} {s.grams}جم</span>
+                      <span className="text-zinc-600">P{s.p} C{s.c} F{s.f} · {s.cal}{STR.kcal.ar}</span>
+                    </div>
+                  )) : <div className="text-zinc-500">لا يوجد نقص.</div>}
+                </div>
+                <div>
+                  <div className="font-semibold">دهون</div>
+                  {fatSug.length ? fatSug.map(s=>(
+                    <div key={s.id} className="flex justify-between">
+                      <span>{STR.addThese.ar} {s.label} {s.grams}جم</span>
+                      <span className="text-zinc-600">P{s.p} C{s.c} F{s.f} · {s.cal}{STR.kcal.ar}</span>
+                    </div>
+                  )) : <div className="text-zinc-500">لا يوجد نقص.</div>}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Workout summary */}
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-2">
+          <div className="font-semibold">{STR.todaySummary.ar} — {STR.workout.ar}</div>
+          <div className="text-sm">
+            نوع اليوم: <b>{DAY_AR[dayType] || 'أخرى'}</b> · الحجم الكلي: <b>{totalVolumeKg}</b> kg·rep
+          </div>
+          <div className={clx("text-sm", verdict.color)}>
+            الشدة: <b>{intensity}</b> — الأوزان: <b>{verdict.verdict}</b>
+          </div>
+          {lastRef && (
+            <div className="text-xs text-zinc-600">
+              مقارنة بآخر {DAY_AR[dayType]} ({new Date(lastRef.at).toLocaleDateString()}): {lastRef.totalVolumeKg} kg·rep
+            </div>
+          )}
+          {!!perMuscleArr.length && (
+            <div className="text-xs">
+              توزيع الحمل:
+              <div className="mt-1 grid grid-cols-2 md:grid-cols-3 gap-1">
+                {perMuscleArr.map((m,i)=>(
+                  <div key={i} className="flex justify-between bg-zinc-100/60 dark:bg-zinc-800/60 rounded px-2 py-1">
+                    <span>{m.name}</span><b>{m.v}</b>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  }
+  // =========================
+  // END PART 7/10
+  // =========================
+</script>
+<!-- =========================
+      PART 8/10 — WORKOUT AUTOSAVE + EXPORT TEXT
+     ========================= -->
+<script type="text/babel">
+  // مساعدات محلية (مستقلة) لاستخدامها داخل Workout
+  const effortAR = (e)=> e==='easy'?'سهل':e==='hard'?'صعب':e==='veryHard'?'صعب جدًا':'متوسط';
+
+  function formatDateTime(dt = new Date()){
+    return `${dt.toLocaleDateString()} ${dt.toLocaleTimeString()}`;
+  }
+
+  function buildTextFromGrouped({at, unit='kg', dayType='other', muscles=[], totalVolumeKg=0}){
+    const lines = [];
+    lines.push(`🗓️ التاريخ: ${new Date(at).toLocaleString()}`);
+    lines.push(`🏷️ النظام: ${DAY_AR[dayType] || 'أخرى'}`);
+    lines.push(`📦 الحجم الكلي: ${round(totalVolumeKg,1)} kg·rep`);
+    lines.push(`———————————————`);
+    muscles.forEach(m=>{
+      lines.push(`💪 ${m.muscleNameAr} — حجم: ${round(m.totalVolumeKg,1)} kg·rep`);
+      (m.exercises||[]).forEach(ex=>{
+        const head = `• ${ex.nameAr} (${ex.nameEn}) — ${ex.type==='free'?'وزن حر':ex.type==='machine'?'جهاز':'كيبل'} — حجم: ${round(ex.volumeKg,1)} kg·rep`;
+        lines.push(head);
+        const setsLine = (ex.sets||[]).map((s,idx)=> `${idx+1}) ${s.wkg||0}kg / ${s.wlb||round(kgToLb(s.wkg||0),1)}lb × ${s.reps||0} (${effortAR(s.effort||'medium')}${s.plate?`, بليت ${s.plate}`:''})`).join(' | ');
+        if(setsLine) lines.push(`   مجموعات: ${setsLine}`);
+      });
+      lines.push(`—`);
+    });
+    return lines.join('\n');
+  }
+
+  function pickTodayWorkoutsLocal(){
+    const hist = safeParse(localStorage.getItem('workout_history'),[]);
+    const tk = todayKey();
+    return hist.filter(h => dateKey(h.at)===tk);
+  }
+
+  // === إعادة تعريف Workout: مع مؤشّر الحفظ + نسخ اليوم كنص ===
+  function Workout(){
+    const [mode,setMode]    = useState('system'); // system | muscle
+    const [system,setSystem]= useState('push');
+    const [muscle,setMuscle]= useState(LIB[0].id);
+    const [tFilter,setTFilter]=useState('all'); // all|free|machine|cable
+    const [q,setQ]=useState('');
+
+    const [unit,setUnit]=useState('kg');
+    const [session,setSession]=useState(()=> loadDay("workout_draft", []));
+    const [saving,setSaving]=useState(false);
+    const [savedAt,setSavedAt]=useState(null);
+
+    // حفظ يومي تلقائي + مؤشّر حفظ
+    useEffect(()=>{
+      setSaving(true);
+      saveDay("workout_draft", session);
+      const t = setTimeout(()=>{
+        setSaving(false);
+        setSavedAt(new Date());
+      }, 350); // ديبونس بسيط لشعور الحفظ
+      return ()=> clearTimeout(t);
+    },[session]);
+
+    const baseList = useMemo(()=>{
+      const list = mode==='system' ? exercisesForSystem(system)
+                                   : exercisesForMuscle(muscle).map(e=>({...e,_muscleId:muscle}));
+      return list;
+    },[mode,system,muscle]);
+
+    const exercises = useMemo(()=>{
+      let list = baseList;
+      if(tFilter!=='all') list = list.filter(x=>x.type===tFilter);
+      if(q.trim()){
+        const s=q.toLowerCase();
+        list = list.filter(x=> (x.en.toLowerCase().includes(s) || x.ar.includes(q)));
+      }
+      return list;
+    },[baseList,q,tFilter]);
+
+    // إضافة تمرين للمسودة
+    const addExercise = (ex)=>{
+      setSession(s=> [...s, { id:uid(), ex, muscleId: ex._muscleId || muscle, sets:[] }]);
+    };
+
+    // عمليات المجموعات
+    const addSet = (rowId)=>{
+      setSession(s=> s.map(r=>{
+        if(r.id!==rowId) return r;
+        const last = r.sets[r.sets.length-1] || { wkg:0, wlb:0, reps:10, effort:'medium', plate:'' };
+        return {...r, sets:[...r.sets, {...last, id:uid()}]};
+      }));
+    };
+    const copyLast = (rowId)=>{
+      setSession(s=> s.map(r=>{
+        if(r.id!==rowId || r.sets.length<1) return r;
+        const last = r.sets[r.sets.length-1];
+        return {...r, sets:[...r.sets, {...last, id:uid()}]};
+      }));
+    };
+    const removeExercise = (rowId)=> setSession(s=> s.filter(r=>r.id!==rowId));
+    const updateSet = (rowId,setId,patch)=>{
+      setSession(s=> s.map(r=>{
+        if(r.id!==rowId) return r;
+        const sets = r.sets.map(st=>{
+          if(st.id!==setId) return st;
+          if(patch.__delete) return null;
+          return {...st, ...patch};
+        }).filter(Boolean);
+        return {...r, sets};
+      }));
+    };
+
+    // الحجم الكلي (kg*reps)
+    const totalVolumeKg = session.reduce((sum,row)=>
+      sum + row.sets.reduce((t,st)=> t + ((+st.wkg||0) * (+st.reps||0)),0)
+    ,0);
+
+    // إنهاء وحفظ الجلسة في السجل
+    const finishSave = ()=>{
+      if(!session.length){
+        alert("ما فيه تمارين محفوظة في المسودة.");
+        return;
+      }
+      // تجميع حسب العضلة
+      const group = {};
+      for(const row of session){
+        const mId = row.muscleId || 'unknown';
+        if(!group[mId]){
+          const mObj = LIB.find(x=>x.id===mId);
+          group[mId] = {
+            muscleId: mId,
+            muscleNameAr: mObj?.ar || mId,
+            muscleNameEn: mObj?.en || mId,
+            totalVolumeKg: 0,
+            exercises: []
+          };
+        }
+        let exVol = 0;
+        for(const st of row.sets){
+          const kg = +st.wkg||0;
+          const reps = +st.reps||0;
+          exVol += (kg * reps);
+        }
+        group[mId].totalVolumeKg += exVol;
+        group[mId].exercises.push({
+          nameAr: row.ex.ar,
+          nameEn: row.ex.en,
+          type: row.ex.type,
+          volumeKg: round(exVol,1),
+          sets: row.sets.map(st=>({
+            wkg: st.wkg||0,
+            wlb: st.wlb||round(kgToLb(st.wkg||0),1),
+            reps: st.reps||0,
+            effort: st.effort||'medium',
+            plate: st.plate||''
+          }))
+        });
+      }
+
+      const musclesArr = Object.values(group);
+      const dayType = getDayTypeFromMuscles(musclesArr.map(m=>m.muscleId));
+      const dayTotal = round(musclesArr.reduce((a,g)=> a+(+g.totalVolumeKg||0),0),1);
+
+      const history = safeParse(localStorage.getItem('workout_history'),[]);
+      history.unshift({
+        id: uid(),
+        at: nowIso(),
+        unit: 'kg',
+        dayType,
+        totalVolumeKg: dayTotal,
+        muscles: musclesArr
+      });
+      localStorage.setItem('workout_history', JSON.stringify(history));
+
+      // نفرّغ المسودة
+      setSession([]);
+      saveDay("workout_draft", []);
+      alert('تم حفظ الجلسة ✅');
+    };
+
+    // بناء نص اليوم
+    function exportTodayText(){
+      // لو عندي مسوّدة => نبني نص منها
+      if(session.length){
+        // نحاكي نفس التجميع (بدون حفظ)
+        const group = {};
+        for(const row of session){
+          const mId = row.muscleId || 'unknown';
+          if(!group[mId]){
+            const mObj = LIB.find(x=>x.id===mId);
+            group[mId] = {
+              muscleId: mId,
+              muscleNameAr: mObj?.ar || mId,
+              muscleNameEn: mObj?.en || mId,
+              totalVolumeKg: 0,
+              exercises: []
+            };
+          }
+          let exVol = 0;
+          for(const st of row.sets){
+            const kg = +st.wkg||0;
+            const reps = +st.reps||0;
+            exVol += (kg * reps);
+          }
+          group[mId].totalVolumeKg += exVol;
+          group[mId].exercises.push({
+            nameAr: row.ex.ar,
+            nameEn: row.ex.en,
+            type: row.ex.type,
+            volumeKg: round(exVol,1),
+            sets: row.sets.map(st=>({
+              wkg: st.wkg||0,
+              wlb: st.wlb||round(kgToLb(st.wkg||0),1),
+              reps: st.reps||0,
+              effort: st.effort||'medium',
+              plate: st.plate||''
+            }))
+          });
+        }
+        const musclesArr = Object.values(group);
+        const dayType = getDayTypeFromMuscles(musclesArr.map(m=>m.muscleId));
+        const dayTotal = round(musclesArr.reduce((a,g)=> a+(+g.totalVolumeKg||0),0),1);
+        return buildTextFromGrouped({
+          at: nowIso(), unit:'kg', dayType, muscles: musclesArr, totalVolumeKg: dayTotal
+        });
+      }
+      // وإلا نصدّر المحفوظ اليوم
+      const todays = pickTodayWorkoutsLocal();
+      if(!todays.length) return 'لا توجد بيانات اليوم حتى الآن.';
+      // لو في أكثر من جلسة اليوم، ندمجهم
+      const merged = {
+        at: todays[0].at,
+        unit: 'kg',
+        dayType: todays[0].dayType || 'other',
+        muscles: [],
+        totalVolumeKg: 0
+      };
+      const byMuscle = {};
+      todays.forEach(h=>{
+        merged.totalVolumeKg += (+h.totalVolumeKg||0);
+        merged.dayType = merged.dayType || h.dayType;
+        (h.muscles||[]).forEach(m=>{
+          const key = m.muscleId||m.muscleNameAr||'unknown';
+          if(!byMuscle[key]){
+            byMuscle[key] = {
+              muscleId: m.muscleId,
+              muscleNameAr: m.muscleNameAr,
+              muscleNameEn: m.muscleNameEn,
+              totalVolumeKg: 0,
+              exercises:[]
+            };
+          }
+          byMuscle[key].totalVolumeKg += (+m.totalVolumeKg||0);
+          byMuscle[key].exercises.push(...(m.exercises||[]));
+        });
+      });
+      merged.muscles = Object.values(byMuscle);
+      return buildTextFromGrouped(merged);
+    }
+
+    async function handleCopy(){
+      const text = exportTodayText();
+      try{
+        await navigator.clipboard.writeText(text);
+        alert('تم نسخ نص اليوم ✅');
+      }catch(e){
+        // محاولة مشاركة مباشرة لو متاحة
+        if(navigator.share){
+          try{
+            await navigator.share({ text, title:'ملخص تمرين اليوم' });
+            return;
+          }catch{}
+        }
+        // Fallback: فتح نافذة نص
+        const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+      }
+    }
+
+    return (
+      <section className="space-y-3">
+        {/* شريط خيارات أعلى مصغّر */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
+            <label className="text-xs">{STR.system.ar}</label>
+            <input type="radio" name="pick" checked={mode==='system'} onChange={()=>setMode('system')} />
+            <span className="text-xs">({STR.chooseSystem.ar})</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs">{STR.muscle.ar}</label>
+            <input type="radio" name="pick" checked={mode==='muscle'} onChange={()=>setMode('muscle')} />
+            <span className="text-xs">({STR.chooseMuscle.ar})</span>
+          </div>
+
+          {mode==='system' ? (
+            <select value={system} onChange={e=>setSystem(e.target.value)} className="border rounded px-2 py-1 text-sm">
+              {DAY_SYSTEMS.map(d=><option key={d.id} value={d.id}>{d.ar}</option>)}
+            </select>
+          ) : (
+            <select value={muscle} onChange={e=>setMuscle(e.target.value)} className="border rounded px-2 py-1 text-sm">
+              {LIB.map(m=><option key={m.id} value={m.id}>{m.ar}</option>)}
+            </select>
+          )}
+
+          <label className="text-xs">{STR.typeFilter.ar}</label>
+          <select value={tFilter} onChange={e=>setTFilter(e.target.value)} className="border rounded px-2 py-1 text-sm">
+            <option value="all">{STR.all.ar}</option>
+            <option value="free">{STR.frees.ar}</option>
+            <option value="machine">{STR.machines.ar}</option>
+            <option value="cable">{STR.cables.ar}</option>
+          </select>
+
+          <input value={q} onChange={e=>setQ(e.target.value)} className="border rounded px-2 py-1 text-sm flex-1 min-w-[140px]" placeholder="ابحث..." />
+
+          <div className="ms-auto flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs">الوحدة:</span>
+              <select value={unit} onChange={e=>setUnit(e.target.value)} className="border rounded px-2 py-1 text-sm">
+                <option value="kg">kg</option>
+                <option value="lb">lb</option>
+              </select>
+            </div>
+            {/* مؤشّر الحفظ */}
+            <div className="text-[11px] text-zinc-600">
+              {saving ? 'جارٍ الحفظ…' : savedAt ? `تم الحفظ ✓ (${savedAt.toLocaleTimeString()})` : 'جاهز'}
+            </div>
+          </div>
+        </div>
+
+        {/* كروت تمارين مصغّرة */}
+        <div className="grid gap-2"
+             style={{gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))"}}>
+          {exercises.map(ex=>(
+            <button key={ex.id}
+              onClick={()=>addExercise(ex)}
+              className="rounded-lg border bg-white/80 dark:bg-zinc-900 p-2 text-right hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 transition">
+              <div className="font-semibold text-sm truncate">{ex.ar}</div>
+              <div className="text-[11px] text-zinc-500 truncate">
+                {ex.en} · {ex.type==='free'?STR.free.ar:ex.type==='machine'?STR.machine.ar:STR.cable.ar}
+              </div>
+              {ex._muscleId && (
+                <div className="text-[11px] text-zinc-600 mt-1">{LIB_BY_ID.get(ex._muscleId)?.ar}</div>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* المسودة + المجموعات (مضغوطة) */}
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold text-sm">{STR.sets.ar}</div>
+            <div className="text-xs">{STR.totalVolume.ar}: <span className="font-semibold">{round(totalVolumeKg,1)} kg·rep</span></div>
+          </div>
+
+          {!session.length && (
+            <div className="text-xs text-zinc-500 mt-2">أضف تمارين من الأعلى ثم أضف مجموعات.</div>
+          )}
+
+          <div className="space-y-2 mt-2">
+            {session.map(row=>(
+              <ExerciseRow
+                key={row.id}
+                row={row}
+                unit={unit}
+                onRemove={()=> removeExercise(row.id)}
+                onAddSet={()=> addSet(row.id)}
+                onCopyLast={()=> copyLast(row.id)}
+                onUpdateSet={(setId,patch)=> updateSet(row.id,setId,patch)}
+              />
+            ))}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+            <button onClick={handleCopy} className="px-3 py-2 rounded bg-zinc-200 text-sm">نسخ اليوم كنص</button>
+            <button onClick={finishSave} className="px-4 py-2 rounded bg-emerald-600 text-white text-sm">
+              {STR.finishSave.ar}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+  // =========================
+  // END PART 8/10
+  // =========================
+</script>
+<!-- =========================
+      PART 9/10 — MEALS UI POLISH + SAFE STR PATCH
+     ========================= -->
+<script type="text/babel">
+  // ===== Patch missing strings safely (won't overwrite existing) =====
+  (function patchSTR(){
+    const add = (k, ar, en)=>{ if(!STR[k]) STR[k] = { ar, en }; };
+    add('breakfast','فطور','Breakfast');
+    add('lunch','غداء','Lunch');
+    add('dinner','عشاء','Dinner');
+    add('snack','سناك','Snack');
+    add('mealType','نوع الوجبة','Meal Type');
+    add('system','النظام','System');
+    add('chooseSystem','اختر نظام','Choose system');
+    add('compare','المقارنة','Compare');
+    add('weekCompare','مقارنة الأسبوع','Week compare');
+    add('systemPlayed','النظام','Day type');
+    // البعض سمّى "Muscle mass" بـ STR.muscle في النسخة القديمة، نضيف بديل:
+    add('muscleMass','الكتلة العضلية (كجم)','Muscle mass (kg)');
+  })();
+
+  // ===== Small badge for meal type =====
+  function MealTypeBadge({type}){
+    const label = STR[type]?.ar || type;
+    const color = type==='breakfast' ? 'bg-amber-100 text-amber-800 border-amber-200'
+                : type==='lunch'     ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                : type==='dinner'    ? 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                : type==='snack'     ? 'bg-pink-100 text-pink-800 border-pink-200'
+                : 'bg-zinc-100 text-zinc-800 border-zinc-200';
+    return <span className={`inline-block rounded-full border px-2 py-[1px] text-[11px] ${color}`}>{label}</span>;
+  }
+
+  // ===== Re-define Meals with compact layout & badges =====
+  function Meals(){
+    const [meals,setMeals]=useState(()=> loadDay("meals_today", []));
+    useEffect(()=> saveDay("meals_today", meals),[meals]);
+
+    const [quick,setQuick]=useState('');
+    const [notice,setNotice]=useState('');
+    const [mealType,setMealType]=useState('breakfast');
+
+    const analyzeAndAdd=()=>{
+      setNotice('');
+      if(!quick.trim()) return;
+      const parts=parseMealLine(quick);
+      const resolved=parts.map(resolveFoodEntry);
+      const known = resolved.filter(r=>!r.unknown);
+      const unknown = resolved.filter(r=>r.unknown).map(r=>r.raw);
+      if(known.length){ 
+        const withType = known.map(k=>({...k, mealType}));
+        setMeals(m=>[...withType,...m]); 
+      }
+      if(unknown.length){ 
+        setNotice(`${STR.unknownFood?.ar || 'عنصر غير معروف'}: ${unknown.join('، ')}`); 
+      }
+      setQuick('');
+    };
+    const removeRow=(id)=> setMeals(m=>m.filter(x=>x.id!==id));
+
+    const totals = React.useMemo(()=> meals.reduce((t,m)=>({
+      cal:t.cal+(+m.cal||0),
+      p:t.p+(+m.p||0),
+      c:t.c+(+m.c||0),
+      f:t.f+(+m.f||0)
+    }),{cal:0,p:0,c:0,f:0}),[meals]);
+
+    return (
+      <section className="mt-4 space-y-3">
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-2">
+          <div className="font-semibold text-sm">{STR.quickAdd?.ar || 'إضافة سريعة'}</div>
+          <div className="flex flex-wrap gap-2">
+            <select value={mealType} onChange={e=>setMealType(e.target.value)} className="border rounded px-2 py-1 text-sm">
+              <option value="breakfast">{STR.breakfast.ar}</option>
+              <option value="lunch">{STR.lunch.ar}</option>
+              <option value="dinner">{STR.dinner.ar}</option>
+              <option value="snack">{STR.snack.ar}</option>
+            </select>
+            <input value={quick} onChange={e=>setQuick(e.target.value)}
+              placeholder={STR.typeMealLine?.ar || "اكتب الوجبة مثل: دجاج 150 جم، رز 150 جم"}
+              className="flex-1 px-3 py-2 rounded-md border text-sm"/>
+            <button onClick={analyzeAndAdd}
+              className="px-3 py-2 rounded-md bg-indigo-600 text-white text-sm">
+              {STR.analyzeAdd?.ar || 'تحليل وإضافة'}
+            </button>
+          </div>
+          {notice && <div className="text-[11px] text-amber-600 mt-1">{notice}</div>}
+        </div>
+
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-zinc-100/60 dark:bg-zinc-800/60">
+              <tr>
+                <th className="p-2 text-right w-28">{STR.mealType?.ar || 'نوع الوجبة'}</th>
+                <th className="p-2 text-right">{STR.mealName?.ar || 'اسم الوجبة'}</th>
+                <th className="p-2 whitespace-nowrap">{STR.calories?.ar || 'سعرات'}</th>
+                <th className="p-2 whitespace-nowrap">{STR.protein?.ar || 'بروتين (غم)'}</th>
+                <th className="p-2 whitespace-nowrap">{STR.carbs?.ar || 'كارب (غم)'}</th>
+                <th className="p-2 whitespace-nowrap">{STR.fat?.ar || 'دهون (غم)'}</th>
+                <th className="p-2">{STR.remove?.ar || 'حذف'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {meals.map(m=>(
+                <tr key={m.id} className="border-t">
+                  <td className="p-2 align-middle"><MealTypeBadge type={m.mealType}/></td>
+                  <td className="p-2">
+                    <div className="truncate">{m.display}</div>
+                    <div className="text-[11px] text-zinc-500">{m.amount}</div>
+                  </td>
+                  <td className="p-2">{m.cal}</td>
+                  <td className="p-2">{m.p}</td>
+                  <td className="p-2">{m.c}</td>
+                  <td className="p-2">{m.f}</td>
+                  <td className="p-2">
+                    <button onClick={()=>removeRow(m.id)} className="text-rose-600 hover:underline">{STR.remove?.ar || 'حذف'}</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-zinc-100/60 dark:bg-zinc-800/60">
+              <tr>
+                <td className="p-2 font-semibold">{STR.totals?.ar || 'الإجمالي'}</td>
+                <td />
+                <td className="p-2 font-semibold">{round(totals.cal,0)} {STR.kcal?.ar || 'سعرة'}</td>
+                <td className="p-2 font-semibold">{round(totals.p,1)}g</td>
+                <td className="p-2 font-semibold">{round(totals.c,1)}g</td>
+                <td className="p-2 font-semibold">{round(totals.f,1)}g</td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+    );
+  }
+  // =========================
+  // END PART 9/10
+  // =========================
+</script>
+<!-- =========================
+      PART 10/10 — SETTINGS + BACKUP/RESTORE
+     ========================= -->
+<script type="text/babel">
+  // ===== Patch strings safely =====
+  (function patchSTR10(){
+    const add = (k, ar, en)=>{ if(!STR[k]) STR[k] = { ar, en }; };
+    add('settings','الإعدادات','Settings');
+    add('weekStart','بداية الأسبوع','Week start');
+    add('saturday','السبت','Saturday');
+    add('sunday','الأحد','Sunday');
+    add('monday','الاثنين','Monday');
+    add('backup','نسخ احتياطي','Backup');
+    add('exportData','تصدير البيانات','Export data');
+    add('importData','استيراد البيانات','Import data');
+    add('chooseJson','اختر ملف JSON','Choose JSON file');
+    add('mergeImport','دمج مع الموجود','Merge with existing');
+    add('replaceImport','استبدال كامل (حذف الموجود)','Replace existing (wipe)');
+    add('done','تم','Done');
+    add('error','خطأ','Error');
+  })();
+
+  // ===== Settings storage =====
+  function getSettings(){
+    return safeParse(localStorage.getItem('app_settings_v1'), { weekStart:'sun' }); // 'sat' | 'sun' | 'mon'
+  }
+  function saveSettings(s){
+    localStorage.setItem('app_settings_v1', JSON.stringify(s||{}));
+  }
+
+  // ===== Week start helpers (generic) =====
+  function startOfWeekGeneric(d, weekStart){
+    const map = { sat:6, sun:0, mon:1 }; // target first-day index
+    const target = map[weekStart] ?? 0;
+    const x = new Date(d);
+    x.setHours(0,0,0,0);
+    const cur = x.getDay(); // 0..6
+    // distance from target going backward (mod 7)
+    let diff = (cur - target + 7) % 7;
+    x.setDate(x.getDate() - diff);
+    return x;
+  }
+  function addDays(d, n){ const x = new Date(d); x.setDate(x.getDate()+n); return x; }
+  function inRange(date, start, end){
+    const t = new Date(date).getTime();
+    return t >= start.getTime() && t < end.getTime();
+  }
+  function weekLabelRange(start){
+    const s = new Date(start);
+    const e = addDays(s,6);
+    return `${s.toLocaleDateString()} → ${e.toLocaleDateString()}`;
+  }
+
+  // ===== Backup / Restore =====
+  const BACKUP_PREFIXES = ['workout_history','profile_v2','meals_today','workout_draft','app_settings_v1'];
+
+  function exportAllData(){
+    const data = {};
+    for(let i=0;i<localStorage.length;i++){
+      const key = localStorage.key(i);
+      if(!key) continue;
+      if(BACKUP_PREFIXES.some(p=> key===p || key.startsWith(p+'__'))){
+        data[key] = localStorage.getItem(key);
+      }
+    }
+    const payload = {
+      version: 1,
+      exportedAt: nowIso(),
+      data
+    };
+    const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `tracker-backup-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    alert(STR.done.ar+' ✓');
+  }
+
+  async function importFromFile(file, mode){ // mode: 'merge' | 'replace'
+    if(!file){ alert(STR.error.ar+': لا يوجد ملف'); return; }
+    try{
+      const text = await file.text();
+      const json = JSON.parse(text);
+      if(!json || typeof json!=='object' || !json.data){ throw new Error('bad'); }
+      if(mode==='replace'){
+        // wipe related keys only
+        const toRemove = [];
+        for(let i=0;i<localStorage.length;i++){
+          const key = localStorage.key(i);
+          if(BACKUP_PREFIXES.some(p=> key===p || key.startsWith(p+'__'))){
+            toRemove.push(key);
+          }
+        }
+        toRemove.forEach(k=> localStorage.removeItem(k));
+      }
+      // merge
+      Object.entries(json.data).forEach(([k,v])=>{
+        localStorage.setItem(k, v);
+      });
+      alert(STR.done.ar+' ✓');
+      // reload to reflect changes (profile/goals/history etc.)
+      location.reload();
+    }catch(e){
+      console.error(e);
+      alert(STR.error.ar+': ملف غير صالح');
+    }
+  }
+
+  // ===== Settings Page =====
+  function Settings(){
+    const [cfg,setCfg] = useState(()=> getSettings());
+    useEffect(()=> saveSettings(cfg), [cfg]);
+
+    const [impMode,setImpMode] = useState('merge'); // merge | replace
+    const fileRef = React.useRef(null);
+
+    return (
+      <section className="space-y-4">
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="font-semibold mb-2">{STR.settings.ar}</div>
+          <div className="grid sm:grid-cols-2 gap-3 text-sm">
+            <label className="flex items-center gap-2">
+              <span className="w-32">{STR.weekStart.ar}</span>
+              <select value={cfg.weekStart} onChange={e=>setCfg(c=>({...c, weekStart:e.target.value}))}
+                className="border rounded px-2 py-1">
+                <option value="sat">{STR.saturday.ar}</option>
+                <option value="sun">{STR.sunday.ar}</option>
+                <option value="mon">{STR.monday.ar}</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="font-semibold mb-2">{STR.backup.ar}</div>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <button onClick={exportAllData} className="px-3 py-2 rounded bg-zinc-200">{STR.exportData.ar}</button>
+            <span className="mx-2">—</span>
+            <input ref={fileRef} type="file" accept="application/json" className="text-xs" aria-label={STR.chooseJson.ar}/>
+            <select value={impMode} onChange={e=>setImpMode(e.target.value)} className="border rounded px-2 py-1">
+              <option value="merge">{STR.mergeImport.ar}</option>
+              <option value="replace">{STR.replaceImport.ar}</option>
+            </select>
+            <button
+              onClick={()=> importFromFile(fileRef.current?.files?.[0], impMode)}
+              className="px-3 py-2 rounded bg-indigo-600 text-white">
+              {STR.importData.ar}
+            </button>
+          </div>
+          <div className="text-xs text-zinc-500 mt-2">
+            يشمل: الملف الشخصي، السجل، مسودات وتمارين اليوم، ووجبات اليوم. عند الاستبدال سيتم حذف البيانات الحالية المتعلقة قبل الاستيراد.
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // ===== Re-define Compare to respect week start from Settings =====
+  function Compare(){
+    const cfg = getSettings();
+    const hist = safeParse(localStorage.getItem('workout_history'),[]);
+    if(!hist.length){
+      return <div className="text-sm text-zinc-500">لا يوجد سجل للمقارنة بعد.</div>;
+    }
+
+    const thisStart = startOfWeekGeneric(new Date(), cfg.weekStart);
+    const prevStart = addDays(thisStart, -7);
+
+    const sliceWeek = (list, start)=>{
+      const end = addDays(start,7);
+      return list.filter(h => inRange(h.at, start, end));
+    };
+
+    const totalsByDayType = (sessions)=>{
+      const m = {};
+      sessions.forEach(h=>{
+        const t = h.dayType || 'other';
+        m[t] = (m[t]||0) + (+h.totalVolumeKg||0);
+      });
+      return m;
+    };
+
+    const toPairsSorted = (obj)=> Object.entries(obj)
+      .map(([k,v])=>({id:k, total:round(v,1)})).sort((a,b)=>b.total-a.total);
+
+    const thisWeek = sliceWeek(hist, thisStart);
+    const prevWeek = sliceWeek(hist, prevStart);
+
+    const thisTotal = round(thisWeek.reduce((a,h)=>a+(+h.totalVolumeKg||0),0),1);
+    const prevTotal = round(prevWeek.reduce((a,h)=>a+(+h.totalVolumeKg||0),0),1);
+
+    const thisByType = totalsByDayType(thisWeek);
+    const prevByType = totalsByDayType(prevWeek);
+
+    const [filterType,setFilterType] = useState('all');
+
+    const nextTargets = {};
+    const allTypes = Array.from(new Set([...Object.keys(prevByType), ...Object.keys(thisByType), 'push','pull','legs','upper','lower','core','other']));
+    allTypes.forEach(t=>{
+      const base = Math.max(+thisByType[t]||0, +prevByType[t]||0);
+      if(base>0) nextTargets[t] = round(base*1.03,1);
+    });
+
+    const recent10 = hist.slice(0,10).map(h=>({
+      at: new Date(h.at),
+      dayType: h.dayType||'other',
+      total: h.totalVolumeKg||0
+    }));
+
+    const growth = (thisTotal && prevTotal) ? round((thisTotal-prevTotal)/Math.max(prevTotal,1)*100,1) : null;
+
+    return (
+      <section className="space-y-3">
+        <div className="text-sm text-zinc-500">المقارنة الأسبوعية (بداية الأسبوع: {cfg.weekStart==='sat'?STR.saturday.ar:cfg.weekStart==='mon'?STR.monday.ar:STR.sunday.ar})</div>
+
+        <div className="grid sm:grid-cols-2 gap-2">
+          <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+            <div className="font-semibold">{STR.weekCompare.ar} — هذا الأسبوع</div>
+            <div className="text-sm mt-1">{weekLabelRange(thisStart)}</div>
+            <div className="text-sm mt-2">الحجم الكلي: <b>{thisTotal}</b> kg·rep</div>
+            <div className="text-xs text-zinc-600">عدد الجلسات: {thisWeek.length}</div>
+          </div>
+          <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+            <div className="font-semibold">{STR.weekCompare.ar} — الأسبوع الماضي</div>
+            <div className="text-sm mt-1">{weekLabelRange(prevStart)}</div>
+            <div className="text-sm mt-2">الحجم الكلي: <b>{prevTotal}</b> kg·rep</div>
+            <div className="text-xs text-zinc-600">عدد الجلسات: {prevWeek.length}</div>
+            {growth!==null && <div className={clx("mt-1 text-xs", growth>=0?"text-emerald-600":"text-rose-600")}>
+              التغيّر: <b>{growth}%</b>
+            </div>}
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">الحجم حسب النظام</div>
+            <div className="flex items-center gap-2 text-sm">
+              <span>فلتر:</span>
+              <select value={filterType} onChange={e=>setFilterType(e.target.value)} className="border rounded px-2 py-1 text-sm">
+                <option value="all">الكل</option>
+                {['push','pull','legs','upper','lower','core','other'].map(t=>(
+                  <option key={t} value={t}>{DAY_AR[t]||t}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto mt-2">
+            <table className="w-full text-xs">
+              <thead className="bg-zinc-100/60 dark:bg-zinc-800/60">
+                <tr>
+                  <th className="p-2 text-right">النظام</th>
+                  <th className="p-2">هذا الأسبوع</th>
+                  <th className="p-2">الأسبوع الماضي</th>
+                  <th className="p-2">المستهدف (الأسبوع القادم)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {['push','pull','legs','upper','lower','core','other'].map(t=>{
+                  if(filterType!=='all' && filterType!==t) return null;
+                  const a = round(thisByType[t]||0,1);
+                  const b = round(prevByType[t]||0,1);
+                  const n = nextTargets[t]||0;
+                  return (
+                    <tr key={t} className="border-t">
+                      <td className="p-2">{DAY_AR[t]||t}</td>
+                      <td className="p-2">{a}</td>
+                      <td className="p-2">{b}</td>
+                      <td className="p-2">{n>0? n : '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div className="font-semibold mb-2">آخر 10 جلسات</div>
+          <div className="grid md:grid-cols-2 gap-2">
+            {recent10.map((r,i)=>(
+              <div key={i} className="border rounded-lg px-3 py-2 text-sm flex items-center justify-between">
+                <div>
+                  <div className="font-medium">{r.at.toLocaleString()}</div>
+                  <div className="text-xs text-zinc-600">{STR.systemPlayed.ar}: {DAY_AR[r.dayType]||'أخرى'}</div>
+                </div>
+                <div className="text-xs">الحجم: <b>{round(r.total,1)}</b></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // ===== Re-define App to add Settings tab =====
+  function App(){
+    const [lang,setLang]=useState('ar');
+    const [tab,setTab]=useState('workout');
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-4">
+        <header className="flex justify-between py-3 border-b">
+          <h1 className="text-lg font-bold">Tracker</h1>
+          <select value={lang} onChange={e=>setLang(e.target.value)} className="border rounded px-2 text-sm">
+            <option value="ar">العربية</option><option value="en">English</option>
+          </select>
+        </header>
+
+        <nav className="flex flex-wrap gap-2 py-2">
+          {[
+            {id:'workout',label:STR.workout.ar},
+            {id:'meals',label:STR.meals.ar},
+            {id:'summary',label:STR.summary.ar},
+            {id:'compare',label:STR.compare.ar},
+            {id:'history',label:STR.history.ar},
+            {id:'profile',label:STR.profile.ar},
+            {id:'settings',label:STR.settings.ar},
+          ].map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              className={clx("px-3 py-1 rounded text-sm", tab===t.id?"bg-indigo-600 text-white":"bg-gray-200")}>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+
+        {tab==='workout' && <Workout/>}
+        {tab==='meals' && <Meals/>}
+        {tab==='summary' && <Summary/>}
+        {tab==='compare' && <Compare/>}
+        {tab==='history' && <History/>}
+        {tab==='profile' && <Profile/>}
+        {tab==='settings' && <Settings/>}
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  // =========================
+  // END PART 10/10
+  // =========================
+</script>
