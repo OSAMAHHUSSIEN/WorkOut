@@ -13,7 +13,8 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
-<body class="bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50">
+<body class="bg-zinc-50 dark:bg-gray-900 text-zinc-900 dark:text-zinc-100">
+
   <div id="root"></div>
 
   <script type="text/babel">
@@ -509,7 +510,8 @@
           {exercises.map(ex=>(
             <button key={ex.id}
               onClick={()=>addExercise(ex)}
-              className="rounded-lg border bg-white/80 dark:bg-zinc-900 p-2 text-right hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 transition">
+              className="rounded-lg border bg-white dark:bg-gray-800
+ p-2 text-right hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 transition">
               <div className="font-semibold text-sm truncate">{ex.ar}</div>
               <div className="text-[11px] text-zinc-500 truncate">
                 {ex.en} · {ex.type==='free'?STR.free.ar:ex.type==='machine'?STR.machine.ar:STR.cable.ar}
@@ -765,7 +767,8 @@
           {exercises.map(ex=>(
             <button key={ex.id}
               onClick={()=>addExercise(ex)}
-              className="rounded-lg border bg-white/80 dark:bg-zinc-900 p-2 text-right hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 transition">
+              className="rounded-lg border bg-white dark:bg-gray-800
+ p-2 text-right hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 transition">
               <div className="font-semibold text-sm truncate">{ex.ar}</div>
               <div className="text-[11px] text-zinc-500 truncate">
                 {ex.en} · {ex.type==='free'?STR.free.ar:ex.type==='machine'?STR.machine.ar:STR.cable.ar}
@@ -855,7 +858,7 @@
 
     return (
       <section className="mt-4 space-y-4">
-        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-2">
+        <div className="rounded-xl border bg-white dark:bg-zinc-800 p-3 space-y-2">
           <div className="font-semibold text-sm">{STR.quickAdd.ar}</div>
           <div className="flex flex-wrap gap-2">
             <select value={mealType} onChange={e=>setMealType(e.target.value)} className="border rounded px-2 py-1 text-sm">
@@ -875,7 +878,8 @@
           {notice && <div className="text-xs text-amber-600 mt-1">{notice}</div>}
         </div>
 
-        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 overflow-x-auto">
+        <div className="rounded-xl border bg-white dark:bg-gray-800
+ overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-zinc-100/60 dark:bg-zinc-800/60">
               <tr>
@@ -1095,7 +1099,8 @@
         <div className="text-sm text-zinc-500">التاريخ: {new Date().toLocaleString()}</div>
 
         {/* Meals summary */}
-        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-1">
+        <div className="rounded-xl border bg-white dark:bg-gray-800
+ p-3 space-y-1">
           <div className="font-semibold">{STR.todaySummary.ar} — {STR.meals.ar}</div>
           <div className="text-sm">
             إجمالي: <b>{Math.round(totals.cal)}</b> {STR.kcal.ar} · بروتين <b>{Math.round(totals.p)}جم</b> · كارب <b>{Math.round(totals.c)}جم</b> · دهون <b>{Math.round(totals.f)}جم</b>
@@ -1112,7 +1117,8 @@
         </div>
 
         {/* Workout summary */}
-        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-2">
+        <div className="rounded-xl border bg-white dark:bg-gray-800
+ p-3 space-y-2">
           <div className="font-semibold">{STR.todaySummary.ar} — {STR.workout.ar}</div>
           <div className="text-sm">
             نوع اليوم: <b>{DAY_AR[dayType] || 'أخرى'}</b> · الحجم الكلي: <b>{totalVolumeKg}</b> kg·rep
@@ -1154,7 +1160,8 @@
     return (
       <div className="space-y-2">
         {hist.map(h=>(
-          <div key={h.id} className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div key={h.id} className="rounded-xl border bg-white dark:bg-gray-800
+ p-3">
             <div className="flex items-center justify-between">
               <div className="font-semibold text-sm">جلسة · {new Date(h.at).toLocaleString()}</div>
               <button onClick={()=>del(h.id)} className="text-rose-600 text-xs hover:underline">{STR.delete.ar}</button>
@@ -1268,7 +1275,8 @@
     return (
       <div className="space-y-2">
         {hist.map(h=>(
-          <div key={h.id} className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3">
+          <div key={h.id} className="rounded-xl border bg-white dark:bg-gray-800
+ p-3">
             <div className="flex items-center justify-between">
               <div className="font-semibold text-sm">
                 جلسة · {new Date(h.at).toLocaleString()}
@@ -1464,7 +1472,8 @@
         </div>
 
         {/* Simple next week note */}
-        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 text-sm">
+        <div className="rounded-xl border bg-white dark:bg-gray-800
+ p-3 text-sm">
           <div className="font-semibold mb-1">ملاحظة للأسبوع القادم</div>
           <div className="text-zinc-700 dark:text-zinc-300">
             استهدف الحفاظ على نفس عدد الجلسات ورفع الحجم ~<b>+3%</b> للأنظمة الظاهرة في الجدول كمستهدف.  
@@ -1809,7 +1818,8 @@
         <div className="text-sm text-zinc-500">التاريخ: {new Date().toLocaleString()}</div>
 
         {/* Meals summary + suggestions */}
-        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-2">
+        <div className="rounded-xl border bg-white dark:bg-gray-800
+ p-3 space-y-2">
           <div className="font-semibold">{STR.todaySummary.ar} — {STR.meals.ar}</div>
           <div className="text-sm">
             إجمالي: <b>{Math.round(totals.cal)}</b> {STR.kcal.ar} · بروتين <b>{Math.round(totals.p)}جم</b> · كارب <b>{Math.round(totals.c)}جم</b> · دهون <b>{Math.round(totals.f)}جم</b>
@@ -1865,7 +1875,8 @@
         </div>
 
         {/* Workout summary */}
-        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-2">
+        <div className="rounded-xl border bg-white dark:bg-gray-800
+ p-3 space-y-2">
           <div className="font-semibold">{STR.todaySummary.ar} — {STR.workout.ar}</div>
           <div className="text-sm">
             نوع اليوم: <b>{DAY_AR[dayType] || 'أخرى'}</b> · الحجم الكلي: <b>{totalVolumeKg}</b> kg·rep
@@ -2231,7 +2242,8 @@
           {exercises.map(ex=>(
             <button key={ex.id}
               onClick={()=>addExercise(ex)}
-              className="rounded-lg border bg-white/80 dark:bg-zinc-900 p-2 text-right hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 transition">
+              className="rounded-lg border bg-white dark:bg-gray-800
+ p-2 text-right hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 transition">
               <div className="font-semibold text-sm truncate">{ex.ar}</div>
               <div className="text-[11px] text-zinc-500 truncate">
                 {ex.en} · {ex.type==='free'?STR.free.ar:ex.type==='machine'?STR.machine.ar:STR.cable.ar}
@@ -2351,7 +2363,8 @@
 
     return (
       <section className="mt-4 space-y-3">
-        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 p-3 space-y-2">
+        <div className="rounded-xl border bg-white dark:bg-gray-800
+ p-3 space-y-2">
           <div className="font-semibold text-sm">{STR.quickAdd?.ar || 'إضافة سريعة'}</div>
           <div className="flex flex-wrap gap-2">
             <select value={mealType} onChange={e=>setMealType(e.target.value)} className="border rounded px-2 py-1 text-sm">
@@ -2371,7 +2384,8 @@
           {notice && <div className="text-[11px] text-amber-600 mt-1">{notice}</div>}
         </div>
 
-        <div className="rounded-xl border bg-white/80 dark:bg-zinc-900 overflow-x-auto">
+        <div className="rounded-xl border bg-white dark:bg-gray-800
+ overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-zinc-100/60 dark:bg-zinc-800/60">
               <tr>
